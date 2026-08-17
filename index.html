@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lovely System Progress Bar</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f7f7f7;
+      color: #111;
+    }
+    body {
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 2rem;
+    }
+    main {
+      width: min(94vw, 900px);
+      display: grid;
+      gap: 2rem;
+    }
+    h1 {
+      margin: 0;
+      text-align: center;
+      font-size: clamp(2rem, 5vw, 4rem);
+      line-height: 1.05;
+    }
+    .panel {
+      background: #fff;
+      border: 1px solid #bbb;
+      border-radius: 0.6rem;
+      padding: 1.5rem;
+      box-shadow: 0 0.4rem 1.5rem rgba(0, 0, 0, 0.05);
+    }
+    .progress-controls {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      gap: 1rem;
+    }
+    .arrow-button {
+      width: 4rem;
+      height: 4rem;
+      border: 2px solid #111;
+      border-radius: 50%;
+      background: #fff;
+      color: #111;
+      font-size: 2rem;
+      font-weight: 800;
+      cursor: pointer;
+    }
+    .arrow-button:hover:not(:disabled),
+    .arrow-button:focus-visible:not(:disabled) {
+      background: #111;
+      color: #fff;
+    }
+    .arrow-button:disabled {
+      cursor: not-allowed;
+      opacity: 0.45;
+    }
+    .progress-area { min-width: 0; }
+    .progress-track {
+      position: relative;
+      height: 3.2rem;
+      border: 2px solid #111;
+      border-radius: 999px;
+      overflow: hidden;
+      background: #eee;
+    }
+    .progress-fill {
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 0%;
+      background: #111;
+      transition: width 260ms ease;
+    }
+    .progress-label {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      font-size: 1.2rem;
+      font-weight: 800;
+      mix-blend-mode: difference;
+      color: #fff;
+      pointer-events: none;
+    }
+    .status-row {
+      min-height: 2.2rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.7rem;
+      margin-top: 0.8rem;
+      font-size: 0.95rem;
+      color: #444;
+    }
+    .spinner {
+      width: 1.1rem;
+      height: 1.1rem;
+      border: 2px solid #bbb;
+      border-top-color: #111;
+      border-radius: 50%;
+      animation: spin 700ms linear infinite;
+    }
+    .hidden { display: none; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .message-layout {
+      display: grid;
+      gap: 1rem;
+    }
+    .message-layout h2 {
+      margin: 0;
+      font-size: 1.35rem;
+    }
+    textarea {
+      width: 100%;
+      min-height: 10rem;
+      resize: vertical;
+      border: 1px solid #888;
+      border-radius: 0.4rem;
+      padding: 0.9rem;
+      font: inherit;
+      line-height: 1.45;
+      background: #fff;
+      color: #111;
+    }
+    .button-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.8rem;
+    }
+    .action-button {
+      border: 2px solid #111;
+      border-radius: 0.35rem;
+      background: #fff;
+      color: #111;
+      padding: 0.7rem 1.1rem;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .action-button:hover,
+    .action-button:focus-visible {
+      background: #111;
+      color: #fff;
+    }
+    .message-preview {
+      min-height: 8rem;
+      padding: 1.4rem 1rem 1.7rem;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+      font-family: "Bradley Hand", "Segoe Print", "Comic Sans MS", cursive;
+      font-size: clamp(1.55rem, 3vw, 2.25rem);
+      font-weight: 900;
+      color: #8f0000;
+      text-shadow:
+        0.025em 0.015em 0 #b30000,
+        -0.018em 0.028em 0 #680000,
+        0.045em -0.012em 0 rgba(120, 0, 0, 0.65),
+        -0.035em -0.018em 0 rgba(180, 0, 0, 0.45);
+      filter: contrast(1.15);
+      transform: rotate(-0.7deg);
+      transform-origin: center;
+      letter-spacing: 0.015em;
+    }
+    .message-preview h1,
+    .message-preview h2,
+    .message-preview h3 {
+      margin-top: 0.7em;
+      margin-bottom: 0.4em;
+    }
+    .message-preview blockquote {
+      margin-left: 0;
+      padding-left: 1rem;
+      border-left: 4px solid #999;
+      color: #444;
+    }
+    .message-preview code {
+      background: #eee;
+      padding: 0.1rem 0.25rem;
+      border-radius: 0.2rem;
+    }
+    .message-preview a {
+      color: inherit;
+      text-decoration-thickness: 0.12em;
+    }
+    .markup-help {
+      margin: 0;
+      font-size: 0.9rem;
+      color: #555;
+    }
+    @media (max-width: 640px) {
+      body { padding: 1rem; }
+      .panel { padding: 1rem; }
+      .progress-controls { gap: 0.6rem; }
+      .arrow-button {
+        width: 3.3rem;
+        height: 3.3rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Lovely System Progress Bar</h1>
+
+    <section class="panel">
+      <div class="progress-controls">
+        <button id="leftButton" class="arrow-button" type="button" aria-label="Move progress left">←</button>
+
+        <div class="progress-area">
+          <div
+            class="progress-track"
+            role="progressbar"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-valuenow="50"
+            id="progressTrack"
+          >
+            <div class="progress-fill" id="progressFill"></div>
+            <div class="progress-label" id="progressLabel">50</div>
+          </div>
+
+          <div class="status-row">
+            <div id="spinner" class="spinner hidden" aria-hidden="true"></div>
+            <span id="statusText">Waiting for someone to move it.</span>
+          </div>
+        </div>
+
+        <button id="rightButton" class="arrow-button" type="button" aria-label="Move progress right">→</button>
+      </div>
+    </section>
+
+    <section class="panel message-layout">
+      <h2>On the wall written in blood</h2>
+
+      <div id="messagePreview" class="message-preview"></div>
+
+      <h2>Words to remember you by</h2>
+
+      <textarea id="messageInput" placeholder="Leave something behind."></textarea>
+
+      <p class="markup-help">
+        Supported markup:
+        **bold**,
+        *italic*,
+        # heading,
+        &gt; quote,
+        - list item,
+        `code`,
+        [link text](https://example.com)
+      </p>
+
+      <div class="button-row">
+        <button id="saveMessageButton" class="action-button" type="button">Save message</button>
+        <button id="clearMessageButton" class="action-button" type="button">Clear message</button>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const API_BASE =
+      "https://9n3f4yv0u6.execute-api.us-east-1.amazonaws.com";
+
+    const MINIMUM_SPINNER_MS = 900;
+
+    const leftButton = document.getElementById("leftButton");
+    const rightButton = document.getElementById("rightButton");
+    const progressTrack = document.getElementById("progressTrack");
+    const progressFill = document.getElementById("progressFill");
+    const progressLabel = document.getElementById("progressLabel");
+    const spinner = document.getElementById("spinner");
+    const statusText = document.getElementById("statusText");
+    const messageInput = document.getElementById("messageInput");
+    const saveMessageButton = document.getElementById("saveMessageButton");
+    const clearMessageButton = document.getElementById("clearMessageButton");
+    const messagePreview = document.getElementById("messagePreview");
+
+    let state = {
+      position: 50,
+      message: ""
+    };
+
+    let moving = false;
+    let messageBusy = false;
+
+    function escapeHtml(text) {
+      return text
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function renderInline(line) {
+      return line
+        .replace(
+          /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
+          '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>'
+        )
+        .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+        .replace(/\*([^*]+)\*/g, "<em>$1</em>")
+        .replace(/`([^`]+)`/g, "<code>$1</code>");
+    }
+
+    function renderMarkup(source) {
+      const lines = escapeHtml(source).split("\n");
+      const output = [];
+      let inList = false;
+
+      function closeList() {
+        if (inList) {
+          output.push("</ul>");
+          inList = false;
+        }
+      }
+
+      for (const sourceLine of lines) {
+        let line = sourceLine;
+
+        if (line.startsWith("- ")) {
+          if (!inList) {
+            output.push("<ul>");
+            inList = true;
+          }
+
+          output.push(`<li>${renderInline(line.slice(2))}</li>`);
+          continue;
+        }
+
+        closeList();
+
+        if (line.startsWith("### ")) {
+          output.push(`<h3>${renderInline(line.slice(4))}</h3>`);
+          continue;
+        }
+
+        if (line.startsWith("## ")) {
+          output.push(`<h2>${renderInline(line.slice(3))}</h2>`);
+          continue;
+        }
+
+        if (line.startsWith("# ")) {
+          output.push(`<h1>${renderInline(line.slice(2))}</h1>`);
+          continue;
+        }
+
+        if (line.startsWith("&gt; ")) {
+          output.push(`<blockquote>${renderInline(line.slice(5))}</blockquote>`);
+          continue;
+        }
+
+        if (!line.trim()) {
+          output.push("<br>");
+          continue;
+        }
+
+        output.push(`<div>${renderInline(line)}</div>`);
+      }
+
+      closeList();
+      return output.join("");
+    }
+
+    function render() {
+      const percentage = `${state.position}%`;
+
+      progressFill.style.width = percentage;
+      progressLabel.textContent = state.position;
+      progressTrack.setAttribute("aria-valuenow", String(state.position));
+
+      leftButton.disabled = moving || state.position <= 0;
+      rightButton.disabled = moving || state.position >= 100;
+
+      saveMessageButton.disabled = messageBusy;
+      clearMessageButton.disabled = messageBusy;
+      messageInput.disabled = messageBusy;
+
+      messageInput.value = state.message;
+
+      messagePreview.innerHTML = state.message
+        ? renderMarkup(state.message)
+        : "<em>No message has been left.</em>";
+    }
+
+    function setMoving(value) {
+      moving = value;
+
+      spinner.classList.toggle("hidden", !value);
+
+      statusText.textContent = value
+        ? "The system is considering your contribution."
+        : "Waiting for someone to move it.";
+
+      render();
+    }
+
+    async function readJson(response) {
+      let result = {};
+
+      try {
+        result = await response.json();
+      } catch (error) {
+        result = {};
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          result.error ||
+          `HTTP ${response.status}`
+        );
+      }
+
+      return result;
+    }
+
+    async function loadState() {
+      statusText.textContent =
+        "Loading shared state...";
+
+      try {
+        const response = await fetch(
+          `${API_BASE}/state`,
+          {
+            method: "GET",
+            cache: "no-store"
+          }
+        );
+
+        const result = await readJson(response);
+
+        state.position = Number(result.position);
+        state.message =
+          typeof result.message === "string"
+            ? result.message
+            : "";
+
+        statusText.textContent =
+          "Waiting for someone to move it.";
+
+        render();
+
+      } catch (error) {
+        console.error(error);
+
+        statusText.textContent =
+          "Unable to load shared state.";
+      }
+    }
+
+    async function move(direction) {
+      if (moving) {
+        return;
+      }
+
+      setMoving(true);
+
+      const started = performance.now();
+
+      try {
+        const response = await fetch(
+          `${API_BASE}/move`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              direction
+            })
+          }
+        );
+
+        const result = await readJson(response);
+
+        state.position = Number(result.position);
+
+        state.message =
+          typeof result.message === "string"
+            ? result.message
+            : state.message;
+
+        render();
+
+      } catch (error) {
+        console.error(error);
+
+        statusText.textContent =
+          "The system declined to move.";
+
+      } finally {
+        const elapsed =
+          performance.now()
+          - started;
+
+        const remaining =
+          Math.max(
+            0,
+            MINIMUM_SPINNER_MS
+            - elapsed
+          );
+
+        await new Promise(
+          resolve =>
+            setTimeout(
+              resolve,
+              remaining
+            )
+        );
+
+        setMoving(false);
+      }
+    }
+
+    async function saveMessage(
+      message,
+      successText
+    ) {
+      if (messageBusy) {
+        return;
+      }
+
+      messageBusy = true;
+
+      statusText.textContent =
+        "Writing on the wall...";
+
+      render();
+
+      try {
+        const response = await fetch(
+          `${API_BASE}/message`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              message
+            })
+          }
+        );
+
+        const result = await readJson(response);
+
+        state.position = Number(result.position);
+        state.message =
+          typeof result.message === "string"
+            ? result.message
+            : "";
+
+        statusText.textContent =
+          successText;
+
+      } catch (error) {
+        console.error(error);
+
+        statusText.textContent =
+          "The wall rejected your words.";
+
+      } finally {
+        messageBusy = false;
+        render();
+      }
+    }
+
+    leftButton.addEventListener(
+      "click",
+      () => move("left")
+    );
+
+    rightButton.addEventListener(
+      "click",
+      () => move("right")
+    );
+
+    saveMessageButton.addEventListener(
+      "click",
+      () => {
+        saveMessage(
+          messageInput.value,
+          "Message saved."
+        );
+      }
+    );
+
+    clearMessageButton.addEventListener(
+      "click",
+      () => {
+        saveMessage(
+          "",
+          "Message cleared."
+        );
+      }
+    );
+
+    loadState();
+  </script>
+</body>
+</html>
