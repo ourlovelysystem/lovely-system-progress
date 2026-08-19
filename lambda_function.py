@@ -310,16 +310,6 @@ def resurrect(event, reason):
         dynamodb_client.transact_write_items(
             TransactItems=[
                 {
-                    "ConditionCheck": {
-                        "TableName": RESURRECTION_TABLE_NAME,
-                        "Key": {
-                            "user_sub": {"S": subject},
-                            "event_id": {"S": "RESURRECTION_CLAIM"},
-                        },
-                        "ConditionExpression": "attribute_not_exists(event_id)",
-                    }
-                },
-                {
                     "Update": {
                         "TableName": TABLE_NAME,
                         "Key": {"state_id": {"S": STATE_ID}},
