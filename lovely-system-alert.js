@@ -44,13 +44,6 @@
       #${MEMORIAL_ID} .ols-cause{margin:1.8rem 0 .5rem;font-size:clamp(1.35rem,4vw,2.15rem);font-weight:900;text-transform:uppercase}
       #${MEMORIAL_ID} .ols-regret{font-style:italic;font-size:1.15rem;margin:1.2rem 0 0}
       #${MEMORIAL_ID} .ols-ground-flowers{font-size:clamp(2rem,6vw,4rem);letter-spacing:.45em;filter:grayscale(.45) saturate(.4);margin:.5rem 0 1.4rem}
-      #${MEMORIAL_ID} .ols-fuq-button,#${MEMORIAL_ID} .ols-resurrect-button{border:3px solid #ddd;background:#181818;color:#fff;padding:.85rem 1.25rem;font:900 1rem system-ui,sans-serif;cursor:pointer}
-      #${MEMORIAL_ID} .ols-fuq-form{display:none;margin:1.4rem auto 0;width:min(100%,620px);background:#171717;border:1px solid #777;padding:1.2rem}
-      #${MEMORIAL_ID} .ols-fuq-form[data-active="true"]{display:block}
-      #${MEMORIAL_ID} .ols-fuq-form h2{margin:.1rem 0 .7rem;font-size:1.45rem}
-      #${MEMORIAL_ID} .ols-fuq-form p{line-height:1.45}
-      #${MEMORIAL_ID} textarea{width:100%;min-height:8rem;padding:.8rem;margin:.5rem 0 1rem;background:#eee;color:#111;border:2px solid #777;font:1rem system-ui,sans-serif;resize:vertical}
-      #${MEMORIAL_ID} .ols-fuq-error{min-height:1.3em;color:#ff8d8d;font:700 .9rem system-ui,sans-serif;margin-top:.6rem}
       @keyframes ols-pulse{0%{background:#b00000}50%{background:#ff1a00}}
       @media(prefers-reduced-motion:reduce){#${BANNER_ID}{animation:none}}
     `;
@@ -96,54 +89,8 @@
           <div class="ols-regret">Rest in peace.<br><br>We could have moved the bar to 51.</div>
         </div>
         <div class="ols-ground-flowers" aria-label="wilted flowers">🥀 🥀</div>
-        <button class="ols-fuq-button" type="button">I give a FUQ.</button>
-        <div class="ols-fuq-form">
-          <h2>Our Lovely System is dead.</h2>
-          <p>Caring after the fact is cheap.</p>
-          <p>To restore Our Lovely System, you must give a FUQ.</p>
-          <p><strong>What do you care enough about to bring it back for?</strong></p>
-          <textarea aria-label="What do you care enough about to bring Our Lovely System back for?"></textarea>
-          <button class="ols-resurrect-button" type="button">Give a FUQ and resurrect Our Lovely System</button>
-          <div class="ols-fuq-error" role="alert"></div>
-        </div>
       </div>`;
     document.body.appendChild(memorial);
-
-    const form = memorial.querySelector(".ols-fuq-form");
-    const textarea = memorial.querySelector("textarea");
-    const error = memorial.querySelector(".ols-fuq-error");
-    memorial.querySelector(".ols-fuq-button").addEventListener("click", () => {
-      form.dataset.active = "true";
-      textarea.focus();
-    });
-    memorial.querySelector(".ols-resurrect-button").addEventListener("click", async event => {
-      const reason = textarea.value.trim();
-      if (!reason) {
-        error.textContent = "You must give a FUQ before Our Lovely System can be resurrected.";
-        textarea.focus();
-        return;
-      }
-      event.currentTarget.disabled = true;
-      error.textContent = "Giving a FUQ...";
-      try {
-        const response = await fetch(`${API_BASE}/resurrect`, {
-          method: "POST",
-          headers: {"Content-Type":"application/json"},
-          body: JSON.stringify({reason})
-        });
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
-        state = result;
-        textarea.value = "";
-        form.dataset.active = "false";
-        error.textContent = "";
-        render();
-      } catch (problem) {
-        error.textContent = problem.message || "Resurrection failed.";
-      } finally {
-        event.currentTarget.disabled = false;
-      }
-    });
   }
 
   function setDraftStatus(dirty) {
