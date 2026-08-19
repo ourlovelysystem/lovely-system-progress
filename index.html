@@ -108,8 +108,96 @@
       border-radius: 50%;
       animation: spin 700ms linear infinite;
     }
-    .hidden { display: none; }
+    .hidden { display: none !important; }
     @keyframes spin { to { transform: rotate(360deg); } }
+
+    .self-destruct-banner {
+      position: fixed;
+      left: 0;
+      right: 0;
+      top: 0;
+      z-index: 900;
+      padding: 0.75rem 1rem;
+      background: #111;
+      color: #fff;
+      border-bottom: 4px solid #8f0000;
+      text-align: center;
+      font-weight: 900;
+      letter-spacing: 0.04em;
+    }
+    .self-destruct-banner .countdown {
+      display: inline-block;
+      min-width: 7ch;
+      margin-left: 0.5rem;
+      font-variant-numeric: tabular-nums;
+      font-size: 1.2em;
+    }
+    .self-destruct-banner .mute-button {
+      margin-left: 1rem;
+      border: 1px solid currentColor;
+      background: transparent;
+      color: inherit;
+      padding: 0.3rem 0.55rem;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    .warning-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 1100;
+      display: grid;
+      place-items: center;
+      padding: 1.5rem;
+      background: rgba(0, 0, 0, 0.72);
+    }
+    .warning-dialog {
+      width: min(92vw, 620px);
+      padding: 2rem;
+      border: 4px solid #111;
+      background: #fff;
+      box-shadow: 0 1rem 4rem rgba(0, 0, 0, 0.35);
+      text-align: center;
+    }
+    .warning-dialog h2 {
+      margin: 0 0 1rem;
+      font-size: clamp(2rem, 5vw, 3.2rem);
+      line-height: 1;
+    }
+    .warning-dialog p {
+      margin: 0 0 1.5rem;
+      font-size: 1.2rem;
+      line-height: 1.45;
+    }
+    .warning-dialog button {
+      border: 2px solid #111;
+      background: #111;
+      color: #fff;
+      padding: 0.8rem 1.2rem;
+      font: inherit;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    .threshold-flash {
+      position: fixed;
+      inset: 0;
+      z-index: 1200;
+      pointer-events: none;
+      background: #fff;
+      opacity: 0;
+    }
+    .threshold-flash.active {
+      animation: threshold-flash 900ms steps(1, end) 1;
+    }
+    @keyframes threshold-flash {
+      0%, 100% { opacity: 0; }
+      10%, 35%, 60% { opacity: 0.96; }
+      22%, 47%, 72% { opacity: 0; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .threshold-flash.active { animation: none; }
+    }
 
     .message-layout {
       display: grid;
@@ -208,6 +296,22 @@
   </style>
 </head>
 <body>
+  <div id="selfDestructBanner" class="self-destruct-banner hidden" role="status" aria-live="assertive">
+    SELF-DESTRUCT MODE — SYSTEM OFFLINE IN
+    <span id="countdown" class="countdown">90:00</span>
+    <button id="muteButton" class="mute-button" type="button">Mute alarm</button>
+  </div>
+
+  <div id="thresholdFlash" class="threshold-flash" aria-hidden="true"></div>
+
+  <div id="warningOverlay" class="warning-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="warningTitle">
+    <div class="warning-dialog">
+      <h2 id="warningTitle">WARNING</h2>
+      <p id="warningMessage"></p>
+      <button id="warningAcknowledge" type="button">Acknowledge</button>
+    </div>
+  </div>
+
   <main>
     <h1>Lovely System Progress Bar</h1>
 
@@ -240,24 +344,12 @@
 
     <section class="panel message-layout">
       <h2>On the wall written in blood</h2>
-
       <div id="messagePreview" class="message-preview"></div>
-
       <h2>Words to remember you by</h2>
-
       <textarea id="messageInput" placeholder="Leave something behind."></textarea>
-
       <p class="markup-help">
-        Supported markup:
-        **bold**,
-        *italic*,
-        # heading,
-        &gt; quote,
-        - list item,
-        `code`,
-        [link text](https://example.com)
+        Supported markup: **bold**, *italic*, # heading, &gt; quote, - list item, `code`, [link text](https://example.com)
       </p>
-
       <div class="button-row">
         <button id="saveMessageButton" class="action-button" type="button">Save message</button>
         <button id="clearMessageButton" class="action-button" type="button">Clear message</button>
@@ -266,9 +358,7 @@
   </main>
 
   <script>
-    const API_BASE =
-      "https://uiwmie0l7e.execute-api.us-east-1.amazonaws.com";
-
+    const API_BASE = "https://uiwmie0l7e.execute-api.us-east-1.amazonaws.com";
     const MINIMUM_SPINNER_MS = 900;
 
     const leftButton = document.getElementById("leftButton");
@@ -282,14 +372,28 @@
     const saveMessageButton = document.getElementById("saveMessageButton");
     const clearMessageButton = document.getElementById("clearMessageButton");
     const messagePreview = document.getElementById("messagePreview");
+    const selfDestructBanner = document.getElementById("selfDestructBanner");
+    const countdown = document.getElementById("countdown");
+    const muteButton = document.getElementById("muteButton");
+    const thresholdFlash = document.getElementById("thresholdFlash");
+    const warningOverlay = document.getElementById("warningOverlay");
+    const warningTitle = document.getElementById("warningTitle");
+    const warningMessage = document.getElementById("warningMessage");
+    const warningAcknowledge = document.getElementById("warningAcknowledge");
 
     let state = {
       position: 50,
-      message: ""
+      message: "",
+      self_destruct_status: "normal",
+      self_destruct_deadline: null,
+      server_time: null
     };
 
     let moving = false;
     let messageBusy = false;
+    let audioMuted = false;
+    let countdownTimer = null;
+    let serverClockOffsetMs = 0;
 
     function escapeHtml(text) {
       return text
@@ -302,10 +406,7 @@
 
     function renderInline(line) {
       return line
-        .replace(
-          /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
-          '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>'
-        )
+        .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
         .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
         .replace(/\*([^*]+)\*/g, "<em>$1</em>")
         .replace(/`([^`]+)`/g, "<code>$1</code>");
@@ -315,294 +416,296 @@
       const lines = escapeHtml(source).split("\n");
       const output = [];
       let inList = false;
-
       function closeList() {
         if (inList) {
           output.push("</ul>");
           inList = false;
         }
       }
-
       for (const sourceLine of lines) {
-        let line = sourceLine;
-
+        const line = sourceLine;
         if (line.startsWith("- ")) {
           if (!inList) {
             output.push("<ul>");
             inList = true;
           }
-
           output.push(`<li>${renderInline(line.slice(2))}</li>`);
           continue;
         }
-
         closeList();
-
         if (line.startsWith("### ")) {
           output.push(`<h3>${renderInline(line.slice(4))}</h3>`);
           continue;
         }
-
         if (line.startsWith("## ")) {
           output.push(`<h2>${renderInline(line.slice(3))}</h2>`);
           continue;
         }
-
         if (line.startsWith("# ")) {
           output.push(`<h1>${renderInline(line.slice(2))}</h1>`);
           continue;
         }
-
         if (line.startsWith("&gt; ")) {
           output.push(`<blockquote>${renderInline(line.slice(5))}</blockquote>`);
           continue;
         }
-
         if (!line.trim()) {
           output.push("<br>");
           continue;
         }
-
         output.push(`<div>${renderInline(line)}</div>`);
       }
-
       closeList();
       return output.join("");
     }
 
+    function applyServerState(result) {
+      state.position = Number(result.position);
+      state.message = typeof result.message === "string" ? result.message : state.message;
+      state.self_destruct_status = result.self_destruct_status || "normal";
+      state.self_destruct_deadline = result.self_destruct_deadline == null ? null : Number(result.self_destruct_deadline);
+      if (result.server_time != null) {
+        state.server_time = Number(result.server_time);
+        serverClockOffsetMs = state.server_time * 1000 - Date.now();
+      }
+      render();
+      updateCountdownMode();
+    }
+
     function render() {
       const percentage = `${state.position}%`;
-
       progressFill.style.width = percentage;
       progressLabel.textContent = state.position;
       progressTrack.setAttribute("aria-valuenow", String(state.position));
 
-      leftButton.disabled = moving || state.position <= 0;
-      rightButton.disabled = moving || state.position >= 100;
-
-      saveMessageButton.disabled = messageBusy;
-      clearMessageButton.disabled = messageBusy;
-      messageInput.disabled = messageBusy;
+      const offline = state.self_destruct_status === "offline";
+      leftButton.disabled = offline || moving || state.position <= 0;
+      rightButton.disabled = offline || moving || state.position >= 100;
+      saveMessageButton.disabled = offline || messageBusy;
+      clearMessageButton.disabled = offline || messageBusy;
+      messageInput.disabled = offline || messageBusy;
 
       messageInput.value = state.message;
+      messagePreview.innerHTML = state.message ? renderMarkup(state.message) : "<em>No message has been left.</em>";
 
-      messagePreview.innerHTML = state.message
-        ? renderMarkup(state.message)
-        : "<em>No message has been left.</em>";
+      if (offline) {
+        statusText.textContent = "Our Lovely System is offline pending administrator intervention.";
+      }
     }
 
     function setMoving(value) {
       moving = value;
-
       spinner.classList.toggle("hidden", !value);
-
-      statusText.textContent = value
-        ? "The system is considering your contribution."
-        : "Waiting for someone to move it.";
-
+      if (state.self_destruct_status !== "offline") {
+        statusText.textContent = value
+          ? "The system is considering your contribution."
+          : "Waiting for someone to move it.";
+      }
       render();
+    }
+
+    function showWarning(title, message) {
+      warningTitle.textContent = title;
+      warningMessage.textContent = message;
+      warningOverlay.classList.remove("hidden");
+      warningAcknowledge.focus();
+    }
+
+    function flashThreshold() {
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        return;
+      }
+      thresholdFlash.classList.remove("active");
+      void thresholdFlash.offsetWidth;
+      thresholdFlash.classList.add("active");
+    }
+
+    async function playKlaxon() {
+      if (audioMuted) {
+        return;
+      }
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass) {
+        return;
+      }
+      const context = new AudioContextClass();
+      try {
+        await context.resume();
+        const gain = context.createGain();
+        gain.gain.value = 0.075;
+        gain.connect(context.destination);
+        const start = context.currentTime;
+        for (let i = 0; i < 6; i += 1) {
+          const osc = context.createOscillator();
+          osc.type = "square";
+          osc.frequency.value = i % 2 === 0 ? 440 : 330;
+          osc.connect(gain);
+          osc.start(start + i * 0.23);
+          osc.stop(start + i * 0.23 + 0.18);
+        }
+        setTimeout(() => context.close(), 1900);
+      } catch (error) {
+        console.error(error);
+        context.close();
+      }
+    }
+
+    function nowServerMs() {
+      return Date.now() + serverClockOffsetMs;
+    }
+
+    function formatRemaining(ms) {
+      const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
+      const minutes = Math.floor(totalSeconds / 60);
+      const seconds = totalSeconds % 60;
+      return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+    }
+
+    function tickCountdown() {
+      if (state.self_destruct_status === "offline") {
+        countdown.textContent = "00:00";
+        selfDestructBanner.classList.remove("hidden");
+        return;
+      }
+      if (state.self_destruct_status !== "countdown" || state.self_destruct_deadline == null) {
+        selfDestructBanner.classList.add("hidden");
+        return;
+      }
+      const remaining = state.self_destruct_deadline * 1000 - nowServerMs();
+      countdown.textContent = formatRemaining(remaining);
+      selfDestructBanner.classList.remove("hidden");
+      if (remaining <= 0) {
+        loadState();
+      }
+    }
+
+    function updateCountdownMode() {
+      if (countdownTimer) {
+        clearInterval(countdownTimer);
+        countdownTimer = null;
+      }
+      if (state.self_destruct_status === "countdown" || state.self_destruct_status === "offline") {
+        tickCountdown();
+        countdownTimer = setInterval(tickCountdown, 1000);
+      } else {
+        selfDestructBanner.classList.add("hidden");
+      }
+    }
+
+    function handleMoveEvent(result) {
+      if (result.event === "warning") {
+        showWarning(
+          "WARNING",
+          `Our Lovely System is approaching its self-destruct threshold. Current progress: ${result.position}%. Self-destruct mode begins at 20%.`
+        );
+      }
+      if (result.event === "self_destruct_started") {
+        flashThreshold();
+        playKlaxon();
+        showWarning(
+          "SELF-DESTRUCT MODE INITIATED",
+          "Our Lovely System has reached the 20% threshold. A 90-minute self-destruct countdown has begun. Move the progress bar above 50% to abort self-destruct."
+        );
+      }
+      if (result.event === "self_destruct_cancelled") {
+        showWarning(
+          "SELF-DESTRUCT ABORTED",
+          "Progress has recovered above 50%. The self-destruct countdown has been disabled."
+        );
+      }
     }
 
     async function readJson(response) {
       let result = {};
-
       try {
         result = await response.json();
       } catch (error) {
         result = {};
       }
-
       if (!response.ok) {
-        throw new Error(
-          result.error ||
-          `HTTP ${response.status}`
-        );
+        throw new Error(result.error || `HTTP ${response.status}`);
       }
-
       return result;
     }
 
     async function loadState() {
-      statusText.textContent =
-        "Loading shared state...";
-
+      statusText.textContent = "Loading shared state...";
       try {
-        const response = await fetch(
-          `${API_BASE}/state`,
-          {
-            method: "GET",
-            cache: "no-store"
-          }
-        );
-
+        const response = await fetch(`${API_BASE}/state`, { method: "GET", cache: "no-store" });
         const result = await readJson(response);
-
-        state.position = Number(result.position);
-        state.message =
-          typeof result.message === "string"
-            ? result.message
-            : "";
-
-        statusText.textContent =
-          "Waiting for someone to move it.";
-
-        render();
-
+        applyServerState(result);
+        if (state.self_destruct_status === "normal") {
+          statusText.textContent = "Waiting for someone to move it.";
+        }
       } catch (error) {
         console.error(error);
-
-        statusText.textContent =
-          "Unable to load shared state.";
+        statusText.textContent = "Unable to load shared state.";
       }
     }
 
     async function move(direction) {
-      if (moving) {
+      if (moving || state.self_destruct_status === "offline") {
         return;
       }
-
       setMoving(true);
-
       const started = performance.now();
-
       try {
-        const response = await fetch(
-          `${API_BASE}/move`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-              direction
-            })
-          }
-        );
-
+        const response = await fetch(`${API_BASE}/move`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ direction })
+        });
         const result = await readJson(response);
-
-        state.position = Number(result.position);
-
-        state.message =
-          typeof result.message === "string"
-            ? result.message
-            : state.message;
-
-        render();
-
+        applyServerState(result);
+        handleMoveEvent(result);
       } catch (error) {
         console.error(error);
-
-        statusText.textContent =
-          "The system declined to move.";
-
+        statusText.textContent = "The system declined to move.";
       } finally {
-        const elapsed =
-          performance.now()
-          - started;
-
-        const remaining =
-          Math.max(
-            0,
-            MINIMUM_SPINNER_MS
-            - elapsed
-          );
-
-        await new Promise(
-          resolve =>
-            setTimeout(
-              resolve,
-              remaining
-            )
-        );
-
+        const elapsed = performance.now() - started;
+        const remaining = Math.max(0, MINIMUM_SPINNER_MS - elapsed);
+        await new Promise(resolve => setTimeout(resolve, remaining));
         setMoving(false);
       }
     }
 
-    async function saveMessage(
-      message,
-      successText
-    ) {
-      if (messageBusy) {
+    async function saveMessage(message, successText) {
+      if (messageBusy || state.self_destruct_status === "offline") {
         return;
       }
-
       messageBusy = true;
-
-      statusText.textContent =
-        "Writing on the wall...";
-
+      statusText.textContent = "Writing on the wall...";
       render();
-
       try {
-        const response = await fetch(
-          `${API_BASE}/message`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-              message
-            })
-          }
-        );
-
+        const response = await fetch(`${API_BASE}/message`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message })
+        });
         const result = await readJson(response);
-
-        state.position = Number(result.position);
-        state.message =
-          typeof result.message === "string"
-            ? result.message
-            : "";
-
-        statusText.textContent =
-          successText;
-
+        applyServerState(result);
+        statusText.textContent = successText;
       } catch (error) {
         console.error(error);
-
-        statusText.textContent =
-          "The wall rejected your words.";
-
+        statusText.textContent = "The wall rejected your words.";
       } finally {
         messageBusy = false;
         render();
       }
     }
 
-    leftButton.addEventListener(
-      "click",
-      () => move("left")
-    );
-
-    rightButton.addEventListener(
-      "click",
-      () => move("right")
-    );
-
-    saveMessageButton.addEventListener(
-      "click",
-      () => {
-        saveMessage(
-          messageInput.value,
-          "Message saved."
-        );
-      }
-    );
-
-    clearMessageButton.addEventListener(
-      "click",
-      () => {
-        saveMessage(
-          "",
-          "Message cleared."
-        );
-      }
-    );
+    warningAcknowledge.addEventListener("click", () => warningOverlay.classList.add("hidden"));
+    muteButton.addEventListener("click", () => {
+      audioMuted = !audioMuted;
+      muteButton.textContent = audioMuted ? "Alarm muted" : "Mute alarm";
+    });
+    leftButton.addEventListener("click", () => move("left"));
+    rightButton.addEventListener("click", () => move("right"));
+    saveMessageButton.addEventListener("click", () => saveMessage(messageInput.value, "Message saved."));
+    clearMessageButton.addEventListener("click", () => saveMessage("", "Message cleared."));
 
     loadState();
+    setInterval(loadState, 15000);
   </script>
 </body>
 </html>
