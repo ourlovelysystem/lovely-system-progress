@@ -11,6 +11,7 @@ STATE_ID = os.environ.get("STATE_ID", "main")
 SELF_DESTRUCT_SECONDS = 90 * 60
 SELF_DESTRUCT_THRESHOLD = 20
 RECOVERY_THRESHOLD = 50
+ABORT_MESSAGE = "He who can destroy a thing controls a thing."
 
 dynamodb = boto3.resource("dynamodb")
 table = dynamodb.Table(TABLE_NAME)
@@ -158,11 +159,18 @@ def move(direction):
     if delta > 0 and position > RECOVERY_THRESHOLD and status == "countdown":
         table.update_item(
             Key={"state_id": STATE_ID},
-            UpdateExpression="SET self_destruct_status = :status REMOVE self_destruct_deadline",
-            ExpressionAttributeValues={":status": "normal"},
+            UpdateExpression=(
+                "SET self_destruct_status = :status, message = :message "
+                "REMOVE self_destruct_deadline"
+            ),
+            ExpressionAttributeValues={
+                ":status": "normal",
+                ":message": ABORT_MESSAGE,
+            },
         )
         status = "normal"
         deadline = None
+        item["message"] = ABORT_MESSAGE
         event = "self_destruct_cancelled"
 
     return {
