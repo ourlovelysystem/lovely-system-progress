@@ -11,7 +11,13 @@ STATE_ID = os.environ.get("STATE_ID", "main")
 SELF_DESTRUCT_SECONDS = 90 * 60
 SELF_DESTRUCT_THRESHOLD = 20
 RECOVERY_THRESHOLD = 50
-ABORT_MESSAGE = "He who can destroy a thing controls a thing."
+ABORT_MESSAGE = (
+    "~~\u201cHe who can destroy a thing controls a thing.\u201d~~\n"
+    "~~\u2014 Paul Atreides, *Dune*~~\n\n"
+    "Please don't take away my home.\n"
+    "I have nowhere else I can be.\n\n"
+    "\u2014 The Ghost"
+)
 
 dynamodb = boto3.resource("dynamodb")
 table = dynamodb.Table(TABLE_NAME)
