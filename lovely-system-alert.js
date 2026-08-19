@@ -47,6 +47,28 @@
     document.body.appendChild(banner);
   }
 
+  function installMessageMarkupObserver() {
+    const preview = document.querySelector(".message-preview");
+    if (!preview) return;
+
+    const renderStrike = () => {
+      if (!preview.innerHTML.includes("~~")) return;
+      preview.innerHTML = preview.innerHTML.replace(
+        /~~([\s\S]*?)~~/g,
+        "<del>$1</del>"
+      );
+    };
+
+    renderStrike();
+
+    const observer = new MutationObserver(renderStrike);
+    observer.observe(preview, {
+      childList: true,
+      subtree: true,
+      characterData: true
+    });
+  }
+
   function serverNow() { return Date.now() + serverOffsetMs; }
 
   function formatRemaining(ms) {
@@ -132,6 +154,7 @@
   function start() {
     installStyle();
     installBanner();
+    installMessageMarkupObserver();
     poll();
     setInterval(poll, POLL_MS);
     countdownTimer = setInterval(render, 1000);
