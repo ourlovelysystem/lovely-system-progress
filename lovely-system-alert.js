@@ -7,6 +7,7 @@
   const COUNTDOWN_DURATION_MS = 90 * 60 * 1000;
   const STYLE_ID = "lovely-system-alert-style";
   const BANNER_ID = "lovely-system-global-alert";
+  const DRAFT_STATUS_ID = "lovely-system-draft-status";
 
   let state = null;
   let serverOffsetMs = 0;
@@ -14,6 +15,9 @@
   let alarmTimer = null;
   let countdownTimer = null;
   let muted = false;
+  let messageDraftDirty = false;
+  let messageInput = null;
+  let nativeTextareaValue = null;
 
   function installStyle() {
     if (document.getElementById(STYLE_ID)) return;
@@ -26,6 +30,8 @@
       #${BANNER_ID} .ols-clock{display:inline-block;margin:.05rem .7rem;font-size:clamp(2rem,5vw,3.8rem);line-height:1;font-weight:1000;font-variant-numeric:tabular-nums;background:#000;color:#fff;padding:.12em .3em;border:3px solid #fff}
       #${BANNER_ID} .ols-sub{font-size:clamp(.75rem,1.5vw,1rem);font-weight:900;letter-spacing:.04em}
       #${BANNER_ID} button{margin-left:.7rem;border:2px solid #fff;background:#000;color:#fff;padding:.35rem .65rem;font:inherit;font-weight:900;cursor:pointer}
+      #${DRAFT_STATUS_ID}{margin:.15rem 0 0;font:700 .85rem/1.2 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#555}
+      #${DRAFT_STATUS_ID}[data-dirty="true"]{color:#8f0000}
       @keyframes ols-pulse{0%{background:#b00000}50%{background:#ff1a00}}
       @media(prefers-reduced-motion:reduce){#${BANNER_ID}{animation:none}}
     `;
@@ -45,6 +51,66 @@
       if (muted) stopAlarm(); else updateAlarm();
     });
     document.body.appendChild(banner);
+  }
+
+  function setDraftStatus(dirty) {
+    messageDraftDirty = dirty;
+    const status = document.getElementById(DRAFT_STATUS_ID);
+    if (!status) return;
+    status.dataset.dirty = dirty ? "true" : "false";
+    status.textContent = dirty ? "Unsaved changes" : "Saved";
+  }
+
+  function nativeSetMessageValue(value) {
+    if (!messageInput || !nativeTextareaValue) return;
+    nativeTextareaValue.set.call(messageInput, value);
+  }
+
+  function installMessageDraftProtection() {
+    messageInput = document.getElementById("messageInput");
+    if (!messageInput) return;
+
+    nativeTextareaValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value");
+    if (!nativeTextareaValue || !nativeTextareaValue.get || !nativeTextareaValue.set) return;
+
+    const status = document.createElement("p");
+    status.id = DRAFT_STATUS_ID;
+    status.setAttribute("role", "status");
+    status.setAttribute("aria-live", "polite");
+    messageInput.insertAdjacentElement("afterend", status);
+    setDraftStatus(false);
+
+    Object.defineProperty(messageInput, "value", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        return nativeTextareaValue.get.call(this);
+      },
+      set(value) {
+        if (messageDraftDirty) return;
+        nativeTextareaValue.set.call(this, value);
+      }
+    });
+
+    messageInput.addEventListener("input", () => setDraftStatus(true));
+
+    const clearButton = document.getElementById("clearMessageButton");
+    if (clearButton) {
+      clearButton.addEventListener("click", () => {
+        nativeSetMessageValue("");
+        setDraftStatus(true);
+      });
+    }
+  }
+
+  function reconcileMessageDraft(result) {
+    if (!messageInput || !nativeTextareaValue || typeof result.message !== "string") return;
+    const draft = nativeTextareaValue.get.call(messageInput);
+    if (messageDraftDirty) {
+      if (result.message === draft) setDraftStatus(false);
+      return;
+    }
+    nativeSetMessageValue(result.message);
   }
 
   function installMessageMarkupObserver() {
@@ -143,6 +209,7 @@
       if (!response.ok) return;
       const result = await response.json();
       state = result;
+      reconcileMessageDraft(result);
       if (result.server_time != null) serverOffsetMs = Number(result.server_time) * 1000 - Date.now();
       render();
       updateAlarm();
@@ -154,6 +221,7 @@
   function start() {
     installStyle();
     installBanner();
+    installMessageDraftProtection();
     installMessageMarkupObserver();
     poll();
     setInterval(poll, POLL_MS);
