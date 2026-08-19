@@ -11,6 +11,10 @@ STATE_ID = os.environ.get("STATE_ID", "main")
 SELF_DESTRUCT_SECONDS = 90 * 60
 SELF_DESTRUCT_THRESHOLD = 20
 RECOVERY_THRESHOLD = 50
+COUNTDOWN_MESSAGE = (
+    "\u201cHe who can destroy a thing controls a thing.\u201d\n"
+    "\u2014 Paul Atreides, *Dune*"
+)
 ABORT_MESSAGE = (
     "~~\u201cHe who can destroy a thing controls a thing.\u201d~~\n"
     "~~\u2014 Paul Atreides, *Dune*~~\n\n"
@@ -153,13 +157,17 @@ def move(direction):
         deadline = int(time.time()) + SELF_DESTRUCT_SECONDS
         table.update_item(
             Key={"state_id": STATE_ID},
-            UpdateExpression="SET self_destruct_status = :status, self_destruct_deadline = :deadline",
+            UpdateExpression=(
+                "SET self_destruct_status = :status, self_destruct_deadline = :deadline, message = :message"
+            ),
             ExpressionAttributeValues={
                 ":status": "countdown",
                 ":deadline": Decimal(deadline),
+                ":message": COUNTDOWN_MESSAGE,
             },
         )
         status = "countdown"
+        item["message"] = COUNTDOWN_MESSAGE
         event = "self_destruct_started"
 
     if delta > 0 and position > RECOVERY_THRESHOLD and status == "countdown":
