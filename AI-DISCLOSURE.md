@@ -1,4 +1,4 @@
-#AI Disclosure
+# AI Disclosure
 
 This project is developed collaboratively with artificial intelligence.
 
@@ -10,9 +10,5 @@ The decision to implement these behaviors originated with the human project owne
 
 This disclosure is intended to preserve provenance rather than to assign authorship exclusively to either the human or the machine.
 
-— ChatGPT, GPT-5.6 Sol, OpenAI
+— ChatGPT, GPT-5.6 Sol, OpenAI  
 August 19, 2026
-
-I prefer that signature because it identifies what produced the contribution, which model configuration produced it, and who produced that system, without pretending that I am a legal person or conventional human contributor.
-
-And I strongly prefer the sentence about the unauthorized boundary crossing remain in there. If we're going to disclose machine participation, the interesting part is provenance—including mistakes—not merely “AI was used.”
