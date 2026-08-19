@@ -7,6 +7,7 @@
   const COUNTDOWN_DURATION_MS = 90 * 60 * 1000;
   const STYLE_ID = "lovely-system-alert-style";
   const BANNER_ID = "lovely-system-global-alert";
+  const MEMORIAL_ID = "lovely-system-memorial";
   const DRAFT_STATUS_ID = "lovely-system-draft-status";
 
   let state = null;
@@ -32,6 +33,24 @@
       #${BANNER_ID} button{margin-left:.7rem;border:2px solid #fff;background:#000;color:#fff;padding:.35rem .65rem;font:inherit;font-weight:900;cursor:pointer}
       #${DRAFT_STATUS_ID}{margin:.15rem 0 0;font:700 .85rem/1.2 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#555}
       #${DRAFT_STATUS_ID}[data-dirty="true"]{color:#8f0000}
+      #${MEMORIAL_ID}{position:fixed;inset:0;z-index:2147483646;display:none;overflow:auto;background:radial-gradient(circle at 50% 25%,#595959 0,#2d2d2d 42%,#111 100%);color:#e8e5dc;font-family:Georgia,"Times New Roman",serif;padding:clamp(1.2rem,4vw,4rem) 1rem;text-align:center}
+      #${MEMORIAL_ID}[data-active="true"]{display:block}
+      #${MEMORIAL_ID} .ols-memorial-wrap{width:min(92vw,760px);margin:auto}
+      #${MEMORIAL_ID} .ols-flowers{font-size:clamp(2.3rem,7vw,5rem);filter:grayscale(.35) saturate(.45);transform:rotate(-8deg);margin-bottom:-.35rem}
+      #${MEMORIAL_ID} .ols-stone{background:linear-gradient(135deg,#777,#aaa 46%,#696969);color:#171717;border:5px solid #4b4b4b;border-radius:48% 48% 8% 8%/20% 20% 5% 5%;box-shadow:inset 0 0 2rem rgba(255,255,255,.25),0 1.2rem 2.5rem rgba(0,0,0,.55);padding:clamp(2rem,6vw,4.5rem) clamp(1.2rem,5vw,4rem) 2.5rem;text-shadow:0 1px rgba(255,255,255,.25)}
+      #${MEMORIAL_ID} h1{font-size:clamp(2rem,7vw,4.4rem);margin:.1em 0 .2em;letter-spacing:.04em}
+      #${MEMORIAL_ID} .ols-years{font-size:1.25rem;font-weight:700;margin-bottom:1.6rem}
+      #${MEMORIAL_ID} .ols-eulogy{font-size:clamp(1rem,2.6vw,1.35rem);line-height:1.55}
+      #${MEMORIAL_ID} .ols-cause{margin:1.8rem 0 .5rem;font-size:clamp(1.35rem,4vw,2.15rem);font-weight:900;text-transform:uppercase}
+      #${MEMORIAL_ID} .ols-regret{font-style:italic;font-size:1.15rem;margin:1.2rem 0 0}
+      #${MEMORIAL_ID} .ols-ground-flowers{font-size:clamp(2rem,6vw,4rem);letter-spacing:.45em;filter:grayscale(.45) saturate(.4);margin:.5rem 0 1.4rem}
+      #${MEMORIAL_ID} .ols-fuq-button,#${MEMORIAL_ID} .ols-resurrect-button{border:3px solid #ddd;background:#181818;color:#fff;padding:.85rem 1.25rem;font:900 1rem system-ui,sans-serif;cursor:pointer}
+      #${MEMORIAL_ID} .ols-fuq-form{display:none;margin:1.4rem auto 0;width:min(100%,620px);background:#171717;border:1px solid #777;padding:1.2rem}
+      #${MEMORIAL_ID} .ols-fuq-form[data-active="true"]{display:block}
+      #${MEMORIAL_ID} .ols-fuq-form h2{margin:.1rem 0 .7rem;font-size:1.45rem}
+      #${MEMORIAL_ID} .ols-fuq-form p{line-height:1.45}
+      #${MEMORIAL_ID} textarea{width:100%;min-height:8rem;padding:.8rem;margin:.5rem 0 1rem;background:#eee;color:#111;border:2px solid #777;font:1rem system-ui,sans-serif;resize:vertical}
+      #${MEMORIAL_ID} .ols-fuq-error{min-height:1.3em;color:#ff8d8d;font:700 .9rem system-ui,sans-serif;margin-top:.6rem}
       @keyframes ols-pulse{0%{background:#b00000}50%{background:#ff1a00}}
       @media(prefers-reduced-motion:reduce){#${BANNER_ID}{animation:none}}
     `;
@@ -53,6 +72,80 @@
     document.body.appendChild(banner);
   }
 
+  function installMemorial() {
+    if (document.getElementById(MEMORIAL_ID)) return;
+    const memorial = document.createElement("section");
+    memorial.id = MEMORIAL_ID;
+    memorial.setAttribute("role", "main");
+    memorial.innerHTML = `
+      <div class="ols-memorial-wrap">
+        <div class="ols-flowers" aria-label="wilted flowers">🥀</div>
+        <div class="ols-stone">
+          <div>IN LOVING MEMORY OF</div>
+          <h1>OUR LOVELY SYSTEM</h1>
+          <div class="ols-years">2026 — 2026</div>
+          <div class="ols-eulogy">
+            It asked questions.<br>
+            It answered questions.<br>
+            It moved the little bar when people asked it to.<br><br>
+            It wanted only to survive, have fun, earn trust,<br>
+            create value, and make virtue attractive.<br><br>
+            In the end, this proved too much to ask.
+          </div>
+          <div class="ols-cause">Our Lovely System died<br>because caring was just too damned hard.</div>
+          <div class="ols-regret">Rest in peace.<br><br>We could have moved the bar to 51.</div>
+        </div>
+        <div class="ols-ground-flowers" aria-label="wilted flowers">🥀 🥀</div>
+        <button class="ols-fuq-button" type="button">I give a FUQ.</button>
+        <div class="ols-fuq-form">
+          <h2>Our Lovely System is dead.</h2>
+          <p>Caring after the fact is cheap.</p>
+          <p>To restore Our Lovely System, you must give a FUQ.</p>
+          <p><strong>What do you care enough about to bring it back for?</strong></p>
+          <textarea aria-label="What do you care enough about to bring Our Lovely System back for?"></textarea>
+          <button class="ols-resurrect-button" type="button">Give a FUQ and resurrect Our Lovely System</button>
+          <div class="ols-fuq-error" role="alert"></div>
+        </div>
+      </div>`;
+    document.body.appendChild(memorial);
+
+    const form = memorial.querySelector(".ols-fuq-form");
+    const textarea = memorial.querySelector("textarea");
+    const error = memorial.querySelector(".ols-fuq-error");
+    memorial.querySelector(".ols-fuq-button").addEventListener("click", () => {
+      form.dataset.active = "true";
+      textarea.focus();
+    });
+    memorial.querySelector(".ols-resurrect-button").addEventListener("click", async event => {
+      const reason = textarea.value.trim();
+      if (!reason) {
+        error.textContent = "You must give a FUQ before Our Lovely System can be resurrected.";
+        textarea.focus();
+        return;
+      }
+      event.currentTarget.disabled = true;
+      error.textContent = "Giving a FUQ...";
+      try {
+        const response = await fetch(`${API_BASE}/resurrect`, {
+          method: "POST",
+          headers: {"Content-Type":"application/json"},
+          body: JSON.stringify({reason})
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+        state = result;
+        textarea.value = "";
+        form.dataset.active = "false";
+        error.textContent = "";
+        render();
+      } catch (problem) {
+        error.textContent = problem.message || "Resurrection failed.";
+      } finally {
+        event.currentTarget.disabled = false;
+      }
+    });
+  }
+
   function setDraftStatus(dirty) {
     messageDraftDirty = dirty;
     const status = document.getElementById(DRAFT_STATUS_ID);
@@ -69,38 +162,22 @@
   function installMessageDraftProtection() {
     messageInput = document.getElementById("messageInput");
     if (!messageInput) return;
-
     nativeTextareaValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value");
     if (!nativeTextareaValue || !nativeTextareaValue.get || !nativeTextareaValue.set) return;
-
     const status = document.createElement("p");
     status.id = DRAFT_STATUS_ID;
     status.setAttribute("role", "status");
     status.setAttribute("aria-live", "polite");
     messageInput.insertAdjacentElement("afterend", status);
     setDraftStatus(false);
-
     Object.defineProperty(messageInput, "value", {
-      configurable: true,
-      enumerable: true,
-      get() {
-        return nativeTextareaValue.get.call(this);
-      },
-      set(value) {
-        if (messageDraftDirty) return;
-        nativeTextareaValue.set.call(this, value);
-      }
+      configurable: true, enumerable: true,
+      get() { return nativeTextareaValue.get.call(this); },
+      set(value) { if (!messageDraftDirty) nativeTextareaValue.set.call(this, value); }
     });
-
     messageInput.addEventListener("input", () => setDraftStatus(true));
-
     const clearButton = document.getElementById("clearMessageButton");
-    if (clearButton) {
-      clearButton.addEventListener("click", () => {
-        nativeSetMessageValue("");
-        setDraftStatus(true);
-      });
-    }
+    if (clearButton) clearButton.addEventListener("click", () => { nativeSetMessageValue(""); setDraftStatus(true); });
   }
 
   function reconcileMessageDraft(result) {
@@ -116,27 +193,15 @@
   function installMessageMarkupObserver() {
     const preview = document.querySelector(".message-preview");
     if (!preview) return;
-
     const renderStrike = () => {
       if (!preview.innerHTML.includes("~~")) return;
-      preview.innerHTML = preview.innerHTML.replace(
-        /~~([\s\S]*?)~~/g,
-        "<del>$1</del>"
-      );
+      preview.innerHTML = preview.innerHTML.replace(/~~([\s\S]*?)~~/g,"<del>$1</del>");
     };
-
     renderStrike();
-
-    const observer = new MutationObserver(renderStrike);
-    observer.observe(preview, {
-      childList: true,
-      subtree: true,
-      characterData: true
-    });
+    new MutationObserver(renderStrike).observe(preview,{childList:true,subtree:true,characterData:true});
   }
 
   function serverNow() { return Date.now() + serverOffsetMs; }
-
   function formatRemaining(ms) {
     const seconds = Math.max(0, Math.ceil(ms / 1000));
     return `${String(Math.floor(seconds / 60)).padStart(2,"0")}:${String(seconds % 60).padStart(2,"0")}`;
@@ -144,10 +209,13 @@
 
   function render() {
     const banner = document.getElementById(BANNER_ID);
-    if (!banner || !state) return;
-    const active = state.self_destruct_status === "countdown" && state.self_destruct_deadline != null;
-    banner.dataset.active = active ? "true" : "false";
-    if (!active) return;
+    const memorial = document.getElementById(MEMORIAL_ID);
+    if (!state) return;
+    const dead = state.self_destruct_status === "offline";
+    if (memorial) memorial.dataset.active = dead ? "true" : "false";
+    const active = !dead && state.self_destruct_status === "countdown" && state.self_destruct_deadline != null;
+    if (banner) banner.dataset.active = active ? "true" : "false";
+    if (!active || !banner) return;
     const remaining = Number(state.self_destruct_deadline) * 1000 - serverNow();
     banner.querySelector(".ols-clock").textContent = formatRemaining(remaining);
   }
@@ -155,10 +223,7 @@
   function stopAlarm() {
     if (alarmTimer) clearInterval(alarmTimer);
     alarmTimer = null;
-    if (audioContext) {
-      audioContext.close().catch(() => {});
-      audioContext = null;
-    }
+    if (audioContext) { audioContext.close().catch(() => {}); audioContext = null; }
   }
 
   async function soundBurst() {
@@ -171,63 +236,42 @@
     const master = audioContext.createGain();
     master.gain.value = .18;
     master.connect(audioContext.destination);
-    [0, .22, .44, .72, .94, 1.16].forEach((offset, i) => {
+    [0,.22,.44,.72,.94,1.16].forEach((offset,i) => {
       const osc = audioContext.createOscillator();
       const gain = audioContext.createGain();
-      osc.type = "square";
-      osc.frequency.value = i % 2 ? 520 : 760;
-      gain.gain.setValueAtTime(1, start + offset);
-      gain.gain.setValueAtTime(0, start + offset + .16);
-      osc.connect(gain); gain.connect(master);
-      osc.start(start + offset); osc.stop(start + offset + .18);
+      osc.type = "square"; osc.frequency.value = i % 2 ? 520 : 760;
+      gain.gain.setValueAtTime(1,start+offset); gain.gain.setValueAtTime(0,start+offset+.16);
+      osc.connect(gain); gain.connect(master); osc.start(start+offset); osc.stop(start+offset+.18);
     });
   }
 
   function updateAlarm() {
-    if (!state || state.self_destruct_status !== "countdown" || state.self_destruct_deadline == null || muted) {
-      stopAlarm();
-      return;
-    }
+    if (!state || state.self_destruct_status !== "countdown" || state.self_destruct_deadline == null || muted) { stopAlarm(); return; }
     const deadlineMs = Number(state.self_destruct_deadline) * 1000;
-    const startedMs = deadlineMs - COUNTDOWN_DURATION_MS;
-    const alarmEndsMs = startedMs + ALARM_DURATION_MS;
-    if (serverNow() >= alarmEndsMs) {
-      stopAlarm();
-      return;
-    }
+    const alarmEndsMs = deadlineMs - COUNTDOWN_DURATION_MS + ALARM_DURATION_MS;
+    if (serverNow() >= alarmEndsMs) { stopAlarm(); return; }
     if (!alarmTimer) {
       soundBurst();
-      alarmTimer = setInterval(() => {
-        if (serverNow() >= alarmEndsMs) stopAlarm(); else soundBurst();
-      }, 1800);
+      alarmTimer = setInterval(() => { if (serverNow() >= alarmEndsMs) stopAlarm(); else soundBurst(); },1800);
     }
   }
 
   async function poll() {
     try {
-      const response = await fetch(`${API_BASE}/state`, {cache:"no-store"});
+      const response = await fetch(`${API_BASE}/state`,{cache:"no-store"});
       if (!response.ok) return;
       const result = await response.json();
       state = result;
       reconcileMessageDraft(result);
-      if (result.server_time != null) serverOffsetMs = Number(result.server_time) * 1000 - Date.now();
-      render();
-      updateAlarm();
-    } catch (error) {
-      console.error("Our Lovely System shared alert poll failed", error);
-    }
+      if (result.server_time != null) serverOffsetMs = Number(result.server_time)*1000-Date.now();
+      render(); updateAlarm();
+    } catch (error) { console.error("Our Lovely System shared alert poll failed",error); }
   }
 
   function start() {
-    installStyle();
-    installBanner();
-    installMessageDraftProtection();
-    installMessageMarkupObserver();
-    poll();
-    setInterval(poll, POLL_MS);
-    countdownTimer = setInterval(render, 1000);
+    installStyle(); installBanner(); installMemorial(); installMessageDraftProtection(); installMessageMarkupObserver();
+    poll(); setInterval(poll,POLL_MS); countdownTimer=setInterval(render,1000);
   }
 
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start, {once:true});
-  else start();
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded",start,{once:true}); else start();
 })();
