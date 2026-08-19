@@ -175,6 +175,7 @@ def resurrection_status(event):
         "username": claims.get("username") or claims.get("cognito:username"),
         "resurrection_count": count,
         "virgin": count == 0,
+        "eligible": count == 0,
     }
 
 
@@ -294,7 +295,12 @@ def resurrect(event, reason):
 
     subject = claims["sub"]
     prior_count = resurrection_history(subject)
-    was_virgin = prior_count == 0
+    if prior_count != 0:
+        raise ValueError(
+            "You have already resurrected Our Lovely System. "
+            "Resurrection virginity can only be spent once."
+        )
+
     now = int(time.time())
     event_id = f"{now:010d}#{uuid.uuid4()}"
     email = claims.get("email") or ""
@@ -303,6 +309,16 @@ def resurrect(event, reason):
     try:
         dynamodb_client.transact_write_items(
             TransactItems=[
+                {
+                    "ConditionCheck": {
+                        "TableName": RESURRECTION_TABLE_NAME,
+                        "Key": {
+                            "user_sub": {"S": subject},
+                            "event_id": {"S": "RESURRECTION_CLAIM"},
+                        },
+                        "ConditionExpression": "attribute_not_exists(event_id)",
+                    }
+                },
                 {
                     "Update": {
                         "TableName": TABLE_NAME,
@@ -325,12 +341,13 @@ def resurrect(event, reason):
                         "TableName": RESURRECTION_TABLE_NAME,
                         "Item": {
                             "user_sub": {"S": subject},
-                            "event_id": {"S": event_id},
+                            "event_id": {"S": "RESURRECTION_CLAIM"},
                             "resurrected_at": {"N": str(now)},
+                            "resurrection_event_id": {"S": event_id},
                             "reason": {"S": reason},
                             "email": {"S": email},
                             "username": {"S": username},
-                            "was_virgin": {"BOOL": was_virgin},
+                            "was_virgin": {"BOOL": True},
                         },
                         "ConditionExpression": "attribute_not_exists(event_id)",
                     }
@@ -340,7 +357,10 @@ def resurrect(event, reason):
     except ClientError as error:
         code = error.response.get("Error", {}).get("Code")
         if code == "TransactionCanceledException":
-            raise ValueError("Resurrection failed because the system state changed.")
+            raise ValueError(
+                "Resurrection failed. The system state changed or this identity "
+                "has already spent its resurrection virginity."
+            )
         raise
 
     result = get_state()
@@ -349,8 +369,8 @@ def resurrect(event, reason):
             "event": "resurrected",
             "resurrection_event_id": event_id,
             "resurrected_by": subject,
-            "was_virgin": was_virgin,
-            "prior_resurrections": prior_count,
+            "was_virgin": True,
+            "prior_resurrections": 0,
         }
     )
     return result
