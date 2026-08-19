@@ -11,7 +11,6 @@ STATE_ID = os.environ.get("STATE_ID", "main")
 SELF_DESTRUCT_SECONDS = 90 * 60
 SELF_DESTRUCT_THRESHOLD = 20
 RECOVERY_THRESHOLD = 50
-RESURRECTION_POSITION = 51
 COUNTDOWN_MESSAGE = (
     "\u201cHe who can destroy a thing controls a thing.\u201d\n"
     "\u2014 Paul Atreides, *Dune*"
@@ -124,7 +123,7 @@ def move(direction):
 
     current = get_state()
     if current["self_destruct_status"] == "offline":
-        raise ValueError("Our Lovely System is offline pending resurrection")
+        raise ValueError("Our Lovely System is offline pending administrator intervention")
 
     delta = -1 if direction == "left" else 1
     limit_condition = "#position > :limit" if delta < 0 else "#position < :limit"
@@ -217,46 +216,6 @@ def save_message(message):
     return normalize(result.get("Attributes") or {})
 
 
-def resurrect(reason):
-    if not isinstance(reason, str):
-        raise ValueError("resurrection statement must be a string")
-    reason = reason.strip()
-    if not reason:
-        raise ValueError("You must give a FUQ before Our Lovely System can be resurrected.")
-    if len(reason) > 10000:
-        raise ValueError("resurrection statement is too long")
-
-    now = int(time.time())
-    try:
-        result = table.update_item(
-            Key={"state_id": STATE_ID},
-            UpdateExpression=(
-                "SET self_destruct_status = :normal, #position = :position, "
-                "resurrection_statement = :reason, resurrected_at = :now "
-                "REMOVE self_destruct_deadline"
-            ),
-            ConditionExpression="self_destruct_status = :offline",
-            ExpressionAttributeNames={"#position": "position"},
-            ExpressionAttributeValues={
-                ":normal": "normal",
-                ":offline": "offline",
-                ":position": Decimal(RESURRECTION_POSITION),
-                ":reason": reason,
-                ":now": Decimal(now),
-            },
-            ReturnValues="ALL_NEW",
-        )
-    except ClientError as error:
-        code = error.response.get("Error", {}).get("Code")
-        if code == "ConditionalCheckFailedException":
-            raise ValueError("Our Lovely System is not dead.")
-        raise
-
-    normalized = normalize(result.get("Attributes") or {})
-    normalized["event"] = "resurrected"
-    return normalized
-
-
 def lambda_handler(event, context):
     try:
         method, path = get_route(event)
@@ -268,8 +227,6 @@ def lambda_handler(event, context):
             return response(200, move(read_body(event).get("direction")))
         if method == "POST" and path == "/message":
             return response(200, save_message(read_body(event).get("message")))
-        if method == "POST" and path == "/resurrect":
-            return response(200, resurrect(read_body(event).get("reason")))
         return response(404, {"error": "not found"})
     except ValueError as error:
         return response(400, {"error": str(error)})
