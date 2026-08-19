@@ -1,16 +1,27 @@
 import json
 import os
 import time
+import uuid
 from decimal import Decimal
 
 import boto3
+from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
 TABLE_NAME = os.environ.get("TABLE_NAME", "lovely-system-progress")
+RESURRECTION_TABLE_NAME = os.environ.get(
+    "RESURRECTION_TABLE_NAME", "lovely-system-resurrections"
+)
 STATE_ID = os.environ.get("STATE_ID", "main")
+COGNITO_CLIENT_ID = os.environ.get("COGNITO_CLIENT_ID", "")
+COGNITO_DOMAIN = os.environ.get("COGNITO_DOMAIN", "")
+COGNITO_REDIRECT_URI = os.environ.get(
+    "COGNITO_REDIRECT_URI", "https://progress.ourlovelysystem.org/"
+)
 SELF_DESTRUCT_SECONDS = 90 * 60
 SELF_DESTRUCT_THRESHOLD = 20
 RECOVERY_THRESHOLD = 50
+RESURRECTION_POSITION = 51
 COUNTDOWN_MESSAGE = (
     "\u201cHe who can destroy a thing controls a thing.\u201d\n"
     "\u2014 Paul Atreides, *Dune*"
@@ -24,14 +35,16 @@ ABORT_MESSAGE = (
 )
 
 dynamodb = boto3.resource("dynamodb")
+dynamodb_client = boto3.client("dynamodb")
 table = dynamodb.Table(TABLE_NAME)
+resurrection_table = dynamodb.Table(RESURRECTION_TABLE_NAME)
 
 
 def response(status_code, body=None):
     headers = {
         "Content-Type": "application/json",
         "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Headers": "Content-Type",
+        "Access-Control-Allow-Headers": "Content-Type,Authorization",
         "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
         "Cache-Control": "no-store",
     }
@@ -65,6 +78,20 @@ def get_route(event):
     method = (http.get("method") or event.get("httpMethod") or "").upper()
     path = http.get("path") or event.get("rawPath") or event.get("path") or "/"
     return method, path.rstrip("/") or "/"
+
+
+def authenticated_claims(event):
+    claims = (
+        ((event.get("requestContext") or {}).get("authorizer") or {})
+        .get("jwt", {})
+        .get("claims", {})
+    )
+    subject = claims.get("sub")
+    if not subject:
+        raise ValueError("authenticated identity required")
+    if claims.get("token_use") not in {None, "access"}:
+        raise ValueError("access token required")
+    return claims
 
 
 def ensure_state():
@@ -117,13 +144,47 @@ def get_state():
     return normalize(ensure_state())
 
 
+def auth_config():
+    if not COGNITO_CLIENT_ID or not COGNITO_DOMAIN:
+        raise ValueError("authentication has not been deployed")
+    return {
+        "client_id": COGNITO_CLIENT_ID,
+        "domain": COGNITO_DOMAIN,
+        "redirect_uri": COGNITO_REDIRECT_URI,
+        "scope": "openid email profile",
+    }
+
+
+def resurrection_history(subject):
+    result = resurrection_table.query(
+        KeyConditionExpression=Key("user_sub").eq(subject),
+        Select="COUNT",
+        ConsistentRead=True,
+    )
+    return int(result.get("Count", 0))
+
+
+def resurrection_status(event):
+    claims = authenticated_claims(event)
+    subject = claims["sub"]
+    count = resurrection_history(subject)
+    return {
+        "authenticated": True,
+        "user_sub": subject,
+        "email": claims.get("email"),
+        "username": claims.get("username") or claims.get("cognito:username"),
+        "resurrection_count": count,
+        "virgin": count == 0,
+    }
+
+
 def move(direction):
     if direction not in {"left", "right"}:
         raise ValueError("direction must be left or right")
 
     current = get_state()
     if current["self_destruct_status"] == "offline":
-        raise ValueError("Our Lovely System is offline pending administrator intervention")
+        raise ValueError("Our Lovely System is dead pending resurrection")
 
     delta = -1 if direction == "left" else 1
     limit_condition = "#position > :limit" if delta < 0 else "#position < :limit"
@@ -158,7 +219,8 @@ def move(direction):
         table.update_item(
             Key={"state_id": STATE_ID},
             UpdateExpression=(
-                "SET self_destruct_status = :status, self_destruct_deadline = :deadline, message = :message"
+                "SET self_destruct_status = :status, "
+                "self_destruct_deadline = :deadline, message = :message"
             ),
             ExpressionAttributeValues={
                 ":status": "countdown",
@@ -216,6 +278,84 @@ def save_message(message):
     return normalize(result.get("Attributes") or {})
 
 
+def resurrect(event, reason):
+    claims = authenticated_claims(event)
+    if not isinstance(reason, str):
+        raise ValueError("resurrection statement must be a string")
+    reason = reason.strip()
+    if not reason:
+        raise ValueError("You must give a FUQ before Our Lovely System can be resurrected.")
+    if len(reason) > 10000:
+        raise ValueError("resurrection statement is too long")
+
+    current = get_state()
+    if current["self_destruct_status"] != "offline":
+        raise ValueError("Our Lovely System is not dead.")
+
+    subject = claims["sub"]
+    prior_count = resurrection_history(subject)
+    was_virgin = prior_count == 0
+    now = int(time.time())
+    event_id = f"{now:010d}#{uuid.uuid4()}"
+    email = claims.get("email") or ""
+    username = claims.get("username") or claims.get("cognito:username") or ""
+
+    try:
+        dynamodb_client.transact_write_items(
+            TransactItems=[
+                {
+                    "Update": {
+                        "TableName": TABLE_NAME,
+                        "Key": {"state_id": {"S": STATE_ID}},
+                        "UpdateExpression": (
+                            "SET self_destruct_status = :normal, #position = :position "
+                            "REMOVE self_destruct_deadline"
+                        ),
+                        "ConditionExpression": "self_destruct_status = :offline",
+                        "ExpressionAttributeNames": {"#position": "position"},
+                        "ExpressionAttributeValues": {
+                            ":normal": {"S": "normal"},
+                            ":offline": {"S": "offline"},
+                            ":position": {"N": str(RESURRECTION_POSITION)},
+                        },
+                    }
+                },
+                {
+                    "Put": {
+                        "TableName": RESURRECTION_TABLE_NAME,
+                        "Item": {
+                            "user_sub": {"S": subject},
+                            "event_id": {"S": event_id},
+                            "resurrected_at": {"N": str(now)},
+                            "reason": {"S": reason},
+                            "email": {"S": email},
+                            "username": {"S": username},
+                            "was_virgin": {"BOOL": was_virgin},
+                        },
+                        "ConditionExpression": "attribute_not_exists(event_id)",
+                    }
+                },
+            ]
+        )
+    except ClientError as error:
+        code = error.response.get("Error", {}).get("Code")
+        if code == "TransactionCanceledException":
+            raise ValueError("Resurrection failed because the system state changed.")
+        raise
+
+    result = get_state()
+    result.update(
+        {
+            "event": "resurrected",
+            "resurrection_event_id": event_id,
+            "resurrected_by": subject,
+            "was_virgin": was_virgin,
+            "prior_resurrections": prior_count,
+        }
+    )
+    return result
+
+
 def lambda_handler(event, context):
     try:
         method, path = get_route(event)
@@ -223,10 +363,16 @@ def lambda_handler(event, context):
             return response(204)
         if method == "GET" and path in {"/", "/state"}:
             return response(200, get_state())
+        if method == "GET" and path == "/auth-config":
+            return response(200, auth_config())
+        if method == "GET" and path == "/resurrection-status":
+            return response(200, resurrection_status(event))
         if method == "POST" and path == "/move":
             return response(200, move(read_body(event).get("direction")))
         if method == "POST" and path == "/message":
             return response(200, save_message(read_body(event).get("message")))
+        if method == "POST" and path == "/resurrect":
+            return response(200, resurrect(event, read_body(event).get("reason")))
         return response(404, {"error": "not found"})
     except ValueError as error:
         return response(400, {"error": str(error)})
