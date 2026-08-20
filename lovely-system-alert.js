@@ -3,7 +3,8 @@
 
   const API_BASE = "https://uiwmie0l7e.execute-api.us-east-1.amazonaws.com";
   const PROGRESS_ORIGIN = "https://progress.ourlovelysystem.org";
-  const POLL_MS = 15000;
+  const POLL_MS = 2000;
+  const FRAME_MS = 50;
   const ALARM_DURATION_MS = 60000;
   const STYLE_ID = "lovely-system-alert-style";
   const BANNER_ID = "lovely-system-global-alert";
@@ -17,6 +18,7 @@
 
   let state = null;
   let serverOffsetMs = 0;
+  let countdownSnapshot = null;
   let audioContext = null;
   let alarmTimer = null;
   let countdownTimer = null;
@@ -268,6 +270,7 @@
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Resurrection failed.");
       state = result;
+      captureCountdownSnapshot(result);
       render();
       textarea.value = "";
       panel.dataset.active = "false";
@@ -321,9 +324,33 @@
   }
 
   function serverNow() { return Date.now() + serverOffsetMs; }
-  function formatRemaining(ms) {
-    const seconds = Math.max(0, Math.ceil(ms / 1000));
-    return `${String(Math.floor(seconds / 60)).padStart(2,"0")}:${String(seconds % 60).padStart(2,"0")}`;
+
+  function formatRemainingSeconds(seconds) {
+    const whole = Math.max(0, Math.ceil(seconds));
+    return `${String(Math.floor(whole / 60)).padStart(2,"0")}:${String(whole % 60).padStart(2,"0")}`;
+  }
+
+  function captureCountdownSnapshot(result) {
+    if (
+      result &&
+      result.self_destruct_status === "countdown" &&
+      result.countdown_remaining_seconds != null &&
+      result.server_time != null
+    ) {
+      countdownSnapshot = {
+        remaining: Number(result.countdown_remaining_seconds),
+        rate: Math.max(1, Number(result.countdown_rate || 1)),
+        serverTimeMs: Number(result.server_time) * 1000
+      };
+    } else {
+      countdownSnapshot = null;
+    }
+  }
+
+  function effectiveCountdownRemaining() {
+    if (!countdownSnapshot) return null;
+    const elapsedReal = Math.max(0, (serverNow() - countdownSnapshot.serverTimeMs) / 1000);
+    return Math.max(0, countdownSnapshot.remaining - elapsedReal * countdownSnapshot.rate);
   }
 
   function render() {
@@ -331,21 +358,31 @@
     const gone = document.getElementById(DISAPPEARED_ID);
     const memorial = document.getElementById(MEMORIAL_ID);
     if (!state) return;
+
     const offline = state.self_destruct_status === "offline";
     const phase = state.presentation_phase || (offline ? "tombstone" : "nominal");
     const disappeared = offline && phase === "disappeared";
     const tombstone = offline && phase === "tombstone";
     if (gone) gone.dataset.active = disappeared ? "true" : "false";
     if (memorial) memorial.dataset.active = tombstone ? "true" : "false";
-    const active = state.self_destruct_status === "countdown" && state.self_destruct_deadline != null;
+
+    const active = state.self_destruct_status === "countdown" && countdownSnapshot != null;
     if (banner) banner.dataset.active = active ? "true" : "false";
     if (!active || !banner) return;
-    const remaining = Number(state.self_destruct_deadline) * 1000 - serverNow();
-    banner.querySelector(".ols-clock").textContent = formatRemaining(remaining);
-    const rate = Math.max(1, Number(state.countdown_rate || 1));
+
+    const remaining = effectiveCountdownRemaining();
+    if (remaining == null) return;
+    banner.querySelector(".ols-clock").textContent = formatRemainingSeconds(remaining);
+
+    const localClock = document.getElementById("countdown");
+    if (localClock) localClock.textContent = formatRemainingSeconds(remaining);
+
+    const rate = countdownSnapshot.rate;
     banner.querySelector(".ols-sub").textContent = rate > 1
       ? `COUNTDOWN ACCELERATED ×${rate} — PROGRESS IS 0. MOVE THE BAR TO 1 TO RETURN TO NORMAL RATE.`
       : "OUR LOVELY SYSTEM WILL SELF-DESTRUCT UNLESS PROGRESS EXCEEDS 50%";
+
+    if (remaining <= 0) poll();
   }
 
   function stopAlarm() {
@@ -391,8 +428,12 @@
       state = result;
       reconcileMessageDraft(result);
       if (result.server_time != null) serverOffsetMs = Number(result.server_time)*1000-Date.now();
-      render(); updateAlarm();
-    } catch (error) { console.error("Our Lovely System shared alert poll failed",error); }
+      captureCountdownSnapshot(result);
+      render();
+      updateAlarm();
+    } catch (error) {
+      console.error("Our Lovely System shared alert poll failed",error);
+    }
   }
 
   async function start() {
@@ -414,7 +455,7 @@
       }
     }
     setInterval(poll,POLL_MS);
-    countdownTimer=setInterval(render,1000);
+    countdownTimer=setInterval(render,FRAME_MS);
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded",start,{once:true}); else start();
