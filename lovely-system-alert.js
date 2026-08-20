@@ -5,9 +5,9 @@
   const PROGRESS_ORIGIN = "https://progress.ourlovelysystem.org";
   const POLL_MS = 15000;
   const ALARM_DURATION_MS = 60000;
-  const COUNTDOWN_DURATION_MS = 90 * 60 * 1000;
   const STYLE_ID = "lovely-system-alert-style";
   const BANNER_ID = "lovely-system-global-alert";
+  const DISAPPEARED_ID = "lovely-system-disappeared";
   const MEMORIAL_ID = "lovely-system-memorial";
   const DRAFT_STATUS_ID = "lovely-system-draft-status";
   const TOKEN_KEY = "ols_resurrection_access_token";
@@ -37,6 +37,10 @@
       #${BANNER_ID} .ols-clock{display:inline-block;margin:.05rem .7rem;font-size:clamp(2rem,5vw,3.8rem);line-height:1;font-weight:1000;font-variant-numeric:tabular-nums;background:#000;color:#fff;padding:.12em .3em;border:3px solid #fff}
       #${BANNER_ID} .ols-sub{font-size:clamp(.75rem,1.5vw,1rem);font-weight:900;letter-spacing:.04em}
       #${BANNER_ID} button{margin-left:.7rem;border:2px solid #fff;background:#000;color:#fff;padding:.35rem .65rem;font:inherit;font-weight:900;cursor:pointer}
+      #${DISAPPEARED_ID}{position:fixed;inset:0;z-index:2147483647;display:none;background:#fff;color:#000;font:16px/1.4 Arial,Helvetica,sans-serif;padding:8px;text-align:left}
+      #${DISAPPEARED_ID}[data-active="true"]{display:block}
+      #${DISAPPEARED_ID} h1{font-size:24px;margin:.67em 0}
+      #${DISAPPEARED_ID} hr{border:0;border-top:1px solid #aaa}
       #${DRAFT_STATUS_ID}{margin:.15rem 0 0;font:700 .85rem/1.2 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#555}
       #${DRAFT_STATUS_ID}[data-dirty="true"]{color:#8f0000}
       #${MEMORIAL_ID}{position:fixed;inset:0;z-index:2147483646;display:none;overflow:auto;background:radial-gradient(circle at 50% 25%,#595959 0,#2d2d2d 42%,#111 100%);color:#e8e5dc;font-family:Georgia,"Times New Roman",serif;padding:clamp(1.2rem,4vw,4rem) 1rem;text-align:center}
@@ -80,6 +84,15 @@
     document.body.appendChild(banner);
   }
 
+  function installDisappeared() {
+    if (document.getElementById(DISAPPEARED_ID)) return;
+    const gone = document.createElement("main");
+    gone.id = DISAPPEARED_ID;
+    gone.setAttribute("role", "main");
+    gone.innerHTML = `<h1>Not Found</h1><p>The requested URL was not found on this server.</p><hr>`;
+    document.body.appendChild(gone);
+  }
+
   function installMemorial() {
     if (document.getElementById(MEMORIAL_ID)) return;
     const memorial = document.createElement("section");
@@ -116,7 +129,6 @@
         </div>
       </div>`;
     document.body.appendChild(memorial);
-
     memorial.querySelector(".ols-fuq-button").addEventListener("click", beginResurrectionCeremony);
     memorial.querySelector(".ols-resurrect-button").addEventListener("click", submitResurrection);
   }
@@ -163,7 +175,6 @@
     const oauthState = randomBase64Url(24);
     sessionStorage.setItem(PKCE_VERIFIER_KEY, verifier);
     sessionStorage.setItem(OAUTH_STATE_KEY, oauthState);
-
     const url = new URL(`${config.domain}/oauth2/authorize`);
     url.searchParams.set("response_type", "code");
     url.searchParams.set("client_id", config.client_id);
@@ -181,32 +192,17 @@
     const params = new URLSearchParams(location.search);
     const code = params.get("code");
     if (!code) return false;
-
     const returnedState = params.get("state");
     const expectedState = sessionStorage.getItem(OAUTH_STATE_KEY);
     const verifier = sessionStorage.getItem(PKCE_VERIFIER_KEY);
     if (!returnedState || returnedState !== expectedState || !verifier) {
       throw new Error("The resurrection authentication ceremony lost its place.");
     }
-
     const config = await getAuthConfig();
-    const body = new URLSearchParams({
-      grant_type: "authorization_code",
-      client_id: config.client_id,
-      code,
-      redirect_uri: config.redirect_uri,
-      code_verifier: verifier
-    });
-    const response = await fetch(`${config.domain}/oauth2/token`, {
-      method: "POST",
-      headers: {"Content-Type": "application/x-www-form-urlencoded"},
-      body
-    });
+    const body = new URLSearchParams({grant_type:"authorization_code",client_id:config.client_id,code,redirect_uri:config.redirect_uri,code_verifier:verifier});
+    const response = await fetch(`${config.domain}/oauth2/token`, {method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body});
     const result = await response.json();
-    if (!response.ok || !result.access_token) {
-      throw new Error(result.error_description || result.error || "Authentication failed.");
-    }
-
+    if (!response.ok || !result.access_token) throw new Error(result.error_description || result.error || "Authentication failed.");
     sessionStorage.setItem(TOKEN_KEY, result.access_token);
     sessionStorage.setItem(TOKEN_EXPIRY_KEY, String(Date.now() + Number(result.expires_in || 3600) * 1000));
     sessionStorage.removeItem(PKCE_VERIFIER_KEY);
@@ -235,16 +231,12 @@
     const error = memorial.querySelector(".ols-resurrection-error");
     error.textContent = "Checking the records...";
     panel.dataset.active = "true";
-
-    const response = await authorizedFetch("/resurrection-status", {cache: "no-store"});
+    const response = await authorizedFetch("/resurrection-status", {cache:"no-store"});
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || "Unable to inspect resurrection history.");
-
-    if (result.virgin) {
-      virgin.textContent = "Our records are clean. You are a resurrection virgin.";
-    } else {
-      virgin.textContent = `You have resurrected Our Lovely System ${result.resurrection_count} time${result.resurrection_count === 1 ? "" : "s"} before. You are no longer a virgin. We remember.`;
-    }
+    virgin.textContent = result.virgin
+      ? "Our records are clean. You are a resurrection virgin."
+      : `You have resurrected Our Lovely System ${result.resurrection_count} time${result.resurrection_count === 1 ? "" : "s"} before. You are no longer a virgin. We remember.`;
     error.textContent = "";
     panel.querySelector("textarea").focus();
   }
@@ -253,14 +245,8 @@
     const memorial = document.getElementById(MEMORIAL_ID);
     const error = memorial.querySelector(".ols-resurrection-error");
     try {
-      if (location.origin !== PROGRESS_ORIGIN) {
-        location.assign(`${PROGRESS_ORIGIN}/?resurrect=1`);
-        return;
-      }
-      if (!storedAccessToken()) {
-        await beginAuthentication();
-        return;
-      }
+      if (location.origin !== PROGRESS_ORIGIN) { location.assign(`${PROGRESS_ORIGIN}/?resurrect=1`); return; }
+      if (!storedAccessToken()) { await beginAuthentication(); return; }
       await showAuthenticatedResurrectionForm();
     } catch (problem) {
       memorial.querySelector(".ols-resurrection").dataset.active = "true";
@@ -274,38 +260,22 @@
     const textarea = panel.querySelector("textarea");
     const error = panel.querySelector(".ols-resurrection-error");
     const reason = textarea.value.trim();
-    if (!reason) {
-      error.textContent = "You must give a FUQ before Our Lovely System can be resurrected.";
-      textarea.focus();
-      return;
-    }
-
+    if (!reason) { error.textContent = "You must give a FUQ before Our Lovely System can be resurrected."; textarea.focus(); return; }
     event.currentTarget.disabled = true;
     error.textContent = "Giving a FUQ...";
     try {
-      const response = await authorizedFetch("/resurrect", {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({reason})
-      });
+      const response = await authorizedFetch("/resurrect", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({reason})});
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Resurrection failed.");
       state = result;
       render();
       textarea.value = "";
       panel.dataset.active = "false";
-      const message = result.was_virgin
-        ? "Our Lovely System lives. You are no longer a resurrection virgin."
-        : "Our Lovely System lives. It remembered you.";
-      setTimeout(() => window.alert(message), 50);
+      setTimeout(() => window.alert("Our Lovely System lives. You are no longer a resurrection virgin."), 50);
     } catch (problem) {
       error.textContent = problem.message || "Resurrection failed.";
-      if (!storedAccessToken()) {
-        error.textContent += " Authenticate again.";
-      }
-    } finally {
-      event.currentTarget.disabled = false;
-    }
+      if (!storedAccessToken()) error.textContent += " Authenticate again.";
+    } finally { event.currentTarget.disabled = false; }
   }
 
   function setDraftStatus(dirty) {
@@ -316,10 +286,7 @@
     status.textContent = dirty ? "Unsaved changes" : "Saved";
   }
 
-  function nativeSetMessageValue(value) {
-    if (!messageInput || !nativeTextareaValue) return;
-    nativeTextareaValue.set.call(messageInput, value);
-  }
+  function nativeSetMessageValue(value) { if (messageInput && nativeTextareaValue) nativeTextareaValue.set.call(messageInput, value); }
 
   function installMessageDraftProtection() {
     messageInput = document.getElementById("messageInput");
@@ -332,11 +299,7 @@
     status.setAttribute("aria-live", "polite");
     messageInput.insertAdjacentElement("afterend", status);
     setDraftStatus(false);
-    Object.defineProperty(messageInput, "value", {
-      configurable: true, enumerable: true,
-      get() { return nativeTextareaValue.get.call(this); },
-      set(value) { if (!messageDraftDirty) nativeTextareaValue.set.call(this, value); }
-    });
+    Object.defineProperty(messageInput, "value", {configurable:true,enumerable:true,get(){return nativeTextareaValue.get.call(this);},set(value){if(!messageDraftDirty)nativeTextareaValue.set.call(this,value);}});
     messageInput.addEventListener("input", () => setDraftStatus(true));
     const clearButton = document.getElementById("clearMessageButton");
     if (clearButton) clearButton.addEventListener("click", () => { nativeSetMessageValue(""); setDraftStatus(true); });
@@ -345,20 +308,14 @@
   function reconcileMessageDraft(result) {
     if (!messageInput || !nativeTextareaValue || typeof result.message !== "string") return;
     const draft = nativeTextareaValue.get.call(messageInput);
-    if (messageDraftDirty) {
-      if (result.message === draft) setDraftStatus(false);
-      return;
-    }
+    if (messageDraftDirty) { if (result.message === draft) setDraftStatus(false); return; }
     nativeSetMessageValue(result.message);
   }
 
   function installMessageMarkupObserver() {
     const preview = document.querySelector(".message-preview");
     if (!preview) return;
-    const renderStrike = () => {
-      if (!preview.innerHTML.includes("~~")) return;
-      preview.innerHTML = preview.innerHTML.replace(/~~([\s\S]*?)~~/g,"<del>$1</del>");
-    };
+    const renderStrike = () => { if (preview.innerHTML.includes("~~")) preview.innerHTML = preview.innerHTML.replace(/~~([\s\S]*?)~~/g,"<del>$1</del>"); };
     renderStrike();
     new MutationObserver(renderStrike).observe(preview,{childList:true,subtree:true,characterData:true});
   }
@@ -371,15 +328,24 @@
 
   function render() {
     const banner = document.getElementById(BANNER_ID);
+    const gone = document.getElementById(DISAPPEARED_ID);
     const memorial = document.getElementById(MEMORIAL_ID);
     if (!state) return;
-    const dead = state.self_destruct_status === "offline";
-    if (memorial) memorial.dataset.active = dead ? "true" : "false";
-    const active = !dead && state.self_destruct_status === "countdown" && state.self_destruct_deadline != null;
+    const offline = state.self_destruct_status === "offline";
+    const phase = state.presentation_phase || (offline ? "tombstone" : "nominal");
+    const disappeared = offline && phase === "disappeared";
+    const tombstone = offline && phase === "tombstone";
+    if (gone) gone.dataset.active = disappeared ? "true" : "false";
+    if (memorial) memorial.dataset.active = tombstone ? "true" : "false";
+    const active = state.self_destruct_status === "countdown" && state.self_destruct_deadline != null;
     if (banner) banner.dataset.active = active ? "true" : "false";
     if (!active || !banner) return;
     const remaining = Number(state.self_destruct_deadline) * 1000 - serverNow();
     banner.querySelector(".ols-clock").textContent = formatRemaining(remaining);
+    const rate = Math.max(1, Number(state.countdown_rate || 1));
+    banner.querySelector(".ols-sub").textContent = rate > 1
+      ? `COUNTDOWN ACCELERATED ×${rate} — PROGRESS IS 0. MOVE THE BAR TO 1 TO RETURN TO NORMAL RATE.`
+      : "OUR LOVELY SYSTEM WILL SELF-DESTRUCT UNLESS PROGRESS EXCEEDS 50%";
   }
 
   function stopAlarm() {
@@ -408,13 +374,12 @@
   }
 
   function updateAlarm() {
-    if (!state || state.self_destruct_status !== "countdown" || state.self_destruct_deadline == null || muted) { stopAlarm(); return; }
-    const deadlineMs = Number(state.self_destruct_deadline) * 1000;
-    const alarmEndsMs = deadlineMs - COUNTDOWN_DURATION_MS + ALARM_DURATION_MS;
-    if (serverNow() >= alarmEndsMs) { stopAlarm(); return; }
+    if (!state || state.self_destruct_status !== "countdown" || muted) { stopAlarm(); return; }
+    const started = Number(state.self_destruct_started_at || 0) * 1000;
+    if (!started || serverNow() >= started + ALARM_DURATION_MS) { stopAlarm(); return; }
     if (!alarmTimer) {
       soundBurst();
-      alarmTimer = setInterval(() => { if (serverNow() >= alarmEndsMs) stopAlarm(); else soundBurst(); },1800);
+      alarmTimer = setInterval(() => { if (serverNow() >= started + ALARM_DURATION_MS) stopAlarm(); else soundBurst(); },1800);
     }
   }
 
@@ -433,17 +398,16 @@
   async function start() {
     installStyle();
     installBanner();
+    installDisappeared();
     installMemorial();
     installMessageDraftProtection();
     installMessageMarkupObserver();
     try {
       const consumed = await consumeAuthenticationCallback();
       if (consumed) await poll();
-    } catch (problem) {
-      console.error("Resurrection authentication callback failed", problem);
-    }
+    } catch (problem) { console.error("Resurrection authentication callback failed", problem); }
     await poll();
-    if (state && state.self_destruct_status === "offline" && location.origin === PROGRESS_ORIGIN && new URLSearchParams(location.search).get("resurrect") === "1" && storedAccessToken()) {
+    if (state && state.self_destruct_status === "offline" && state.presentation_phase === "tombstone" && location.origin === PROGRESS_ORIGIN && new URLSearchParams(location.search).get("resurrect") === "1" && storedAccessToken()) {
       try { await showAuthenticatedResurrectionForm(); } catch (problem) {
         document.querySelector(`#${MEMORIAL_ID} .ols-resurrection`).dataset.active = "true";
         document.querySelector(`#${MEMORIAL_ID} .ols-resurrection-error`).textContent = problem.message || "Unable to continue resurrection.";
