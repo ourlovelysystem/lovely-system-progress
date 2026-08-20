@@ -17,11 +17,8 @@ jobs:
           p=Path('index.html')
           s=p.read_text()
           alert='  <script src="/lovely-system-alert.js"></script>\n'
-          rate='  <script src="/lovely-system-countdown-rate.js"></script>\n'
           if 'src="/lovely-system-alert.js"' not in s:
               s=s.replace('</body>', alert+'</body>')
-          if 'src="/lovely-system-countdown-rate.js"' not in s:
-              s=s.replace('</body>', rate+'</body>')
           p.write_text(s)
           PY
       - name: Commit installation
