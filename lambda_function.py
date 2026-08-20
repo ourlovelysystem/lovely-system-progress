@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import time
 import uuid
@@ -9,19 +10,20 @@ from boto3.dynamodb.conditions import Key
 from botocore.exceptions import ClientError
 
 TABLE_NAME = os.environ.get("TABLE_NAME", "lovely-system-progress")
-RESURRECTION_TABLE_NAME = os.environ.get(
-    "RESURRECTION_TABLE_NAME", "lovely-system-resurrections"
-)
+RESURRECTION_TABLE_NAME = os.environ.get("RESURRECTION_TABLE_NAME", "lovely-system-resurrections")
 STATE_ID = os.environ.get("STATE_ID", "main")
 COGNITO_CLIENT_ID = os.environ.get("COGNITO_CLIENT_ID", "")
 COGNITO_DOMAIN = os.environ.get("COGNITO_DOMAIN", "")
-COGNITO_REDIRECT_URI = os.environ.get(
-    "COGNITO_REDIRECT_URI", "https://progress.ourlovelysystem.org/"
-)
+COGNITO_REDIRECT_URI = os.environ.get("COGNITO_REDIRECT_URI", "https://progress.ourlovelysystem.org/")
+
 SELF_DESTRUCT_SECONDS = 90 * 60
 SELF_DESTRUCT_THRESHOLD = 20
 RECOVERY_THRESHOLD = 50
 RESURRECTION_POSITION = 51
+ZERO_PROGRESS_ACCELERATION = 60
+DISAPPEARED_SECONDS = 90 * 60
+AUTO_RESURRECT_SECONDS = 72 * 60 * 60
+
 COUNTDOWN_MESSAGE = (
     "\u201cHe who can destroy a thing controls a thing.\u201d\n"
     "\u2014 Paul Atreides, *Dune*"
@@ -41,16 +43,15 @@ resurrection_table = dynamodb.Table(RESURRECTION_TABLE_NAME)
 
 
 def response(status_code, body=None):
-    headers = {
-        "Content-Type": "application/json",
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Headers": "Content-Type,Authorization",
-        "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-        "Cache-Control": "no-store",
-    }
     return {
         "statusCode": status_code,
-        "headers": headers,
+        "headers": {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "Content-Type,Authorization",
+            "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+            "Cache-Control": "no-store",
+        },
         "body": "" if status_code == 204 else json.dumps(body or {}),
     }
 
@@ -81,11 +82,7 @@ def get_route(event):
 
 
 def authenticated_claims(event):
-    claims = (
-        ((event.get("requestContext") or {}).get("authorizer") or {})
-        .get("jwt", {})
-        .get("claims", {})
-    )
+    claims = (((event.get("requestContext") or {}).get("authorizer") or {}).get("jwt", {}).get("claims", {}))
     subject = claims.get("sub")
     if not subject:
         raise ValueError("authenticated identity required")
@@ -99,21 +96,59 @@ def ensure_state():
     item = result.get("Item")
     if item:
         return item
-
     item = {
         "state_id": STATE_ID,
         "position": Decimal(50),
         "message": "",
         "self_destruct_status": "normal",
+        "countdown_rate": Decimal(1),
     }
     try:
         table.put_item(Item=item, ConditionExpression="attribute_not_exists(state_id)")
         return item
     except ClientError as error:
-        code = error.response.get("Error", {}).get("Code")
-        if code != "ConditionalCheckFailedException":
+        if error.response.get("Error", {}).get("Code") != "ConditionalCheckFailedException":
             raise
         return table.get_item(Key={"state_id": STATE_ID}, ConsistentRead=True)["Item"]
+
+
+def _set_destroyed(destroyed_at):
+    table.update_item(
+        Key={"state_id": STATE_ID},
+        UpdateExpression=(
+            "SET self_destruct_status = :offline, self_destructed_at = :destroyed, "
+            "countdown_rate = :rate"
+        ),
+        ExpressionAttributeValues={
+            ":offline": "offline",
+            ":destroyed": Decimal(destroyed_at),
+            ":rate": Decimal(1),
+        },
+    )
+
+
+def _auto_resurrect(now):
+    try:
+        table.update_item(
+            Key={"state_id": STATE_ID},
+            UpdateExpression=(
+                "SET self_destruct_status = :normal, #position = :position, "
+                "countdown_rate = :rate, last_auto_resurrected_at = :now "
+                "REMOVE self_destruct_deadline, self_destruct_started_at, self_destructed_at"
+            ),
+            ConditionExpression="self_destruct_status = :offline",
+            ExpressionAttributeNames={"#position": "position"},
+            ExpressionAttributeValues={
+                ":normal": "normal",
+                ":offline": "offline",
+                ":position": Decimal(RESURRECTION_POSITION),
+                ":rate": Decimal(1),
+                ":now": Decimal(now),
+            },
+        )
+    except ClientError as error:
+        if error.response.get("Error", {}).get("Code") != "ConditionalCheckFailedException":
+            raise
 
 
 def normalize(item):
@@ -122,20 +157,55 @@ def normalize(item):
     status = item.get("self_destruct_status", "normal")
     deadline = item.get("self_destruct_deadline")
     deadline = int(deadline) if deadline is not None else None
+    started_at = item.get("self_destruct_started_at")
+    started_at = int(started_at) if started_at is not None else None
+    rate = int(item.get("countdown_rate", 1))
+    destroyed_at = item.get("self_destructed_at")
+    destroyed_at = int(destroyed_at) if destroyed_at is not None else None
 
     if status == "countdown" and deadline is not None and now >= deadline:
-        table.update_item(
-            Key={"state_id": STATE_ID},
-            UpdateExpression="SET self_destruct_status = :offline",
-            ExpressionAttributeValues={":offline": "offline"},
-        )
+        destroyed_at = deadline
+        _set_destroyed(destroyed_at)
         status = "offline"
+        rate = 1
+
+    phase = "nominal"
+    if status == "offline":
+        if destroyed_at is None:
+            destroyed_at = now
+            table.update_item(
+                Key={"state_id": STATE_ID},
+                UpdateExpression="SET self_destructed_at = :destroyed",
+                ExpressionAttributeValues={":destroyed": Decimal(destroyed_at)},
+            )
+        age = max(0, now - destroyed_at)
+        if age >= AUTO_RESURRECT_SECONDS:
+            _auto_resurrect(now)
+            status = "normal"
+            position = RESURRECTION_POSITION
+            deadline = None
+            started_at = None
+            destroyed_at = None
+            rate = 1
+            phase = "nominal"
+        elif age < DISAPPEARED_SECONDS:
+            phase = "disappeared"
+        else:
+            phase = "tombstone"
+    elif status == "countdown":
+        phase = "countdown"
 
     return {
         "position": position,
         "message": item.get("message", ""),
         "self_destruct_status": status,
         "self_destruct_deadline": deadline,
+        "self_destruct_started_at": started_at,
+        "self_destructed_at": destroyed_at,
+        "countdown_rate": rate,
+        "presentation_phase": phase,
+        "disappeared_until": destroyed_at + DISAPPEARED_SECONDS if destroyed_at is not None else None,
+        "auto_resurrect_at": destroyed_at + AUTO_RESURRECT_SECONDS if destroyed_at is not None else None,
         "server_time": now,
     }
 
@@ -179,6 +249,28 @@ def resurrection_status(event):
     }
 
 
+def _retime_countdown(position, status, deadline, rate):
+    if status != "countdown" or deadline is None:
+        return deadline, rate, None
+    now = int(time.time())
+    remaining_real = max(0, int(deadline) - now)
+    remaining_countdown = remaining_real * max(1, int(rate))
+    desired_rate = ZERO_PROGRESS_ACCELERATION if position == 0 else 1
+    if desired_rate == int(rate):
+        return int(deadline), int(rate), None
+    new_deadline = now + int(math.ceil(remaining_countdown / desired_rate))
+    event = "countdown_accelerated" if desired_rate > 1 else "countdown_normalized"
+    table.update_item(
+        Key={"state_id": STATE_ID},
+        UpdateExpression="SET self_destruct_deadline = :deadline, countdown_rate = :rate",
+        ExpressionAttributeValues={
+            ":deadline": Decimal(new_deadline),
+            ":rate": Decimal(desired_rate),
+        },
+    )
+    return new_deadline, desired_rate, event
+
+
 def move(direction):
     if direction not in {"left", "right"}:
         raise ValueError("direction must be left or right")
@@ -201,8 +293,7 @@ def move(direction):
             ReturnValues="ALL_NEW",
         )
     except ClientError as error:
-        code = error.response.get("Error", {}).get("Code")
-        if code == "ConditionalCheckFailedException":
+        if error.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
             return get_state()
         raise
 
@@ -210,22 +301,28 @@ def move(direction):
     position = int(item.get("position", 50))
     status = item.get("self_destruct_status", "normal")
     deadline = item.get("self_destruct_deadline")
+    deadline = int(deadline) if deadline is not None else None
+    rate = int(item.get("countdown_rate", 1))
     event = None
 
     if delta < 0 and 20 < position < 25:
         event = "warning"
 
     if delta < 0 and position == SELF_DESTRUCT_THRESHOLD and status != "countdown":
-        deadline = int(time.time()) + SELF_DESTRUCT_SECONDS
+        now = int(time.time())
+        deadline = now + SELF_DESTRUCT_SECONDS
+        rate = 1
         table.update_item(
             Key={"state_id": STATE_ID},
             UpdateExpression=(
-                "SET self_destruct_status = :status, "
-                "self_destruct_deadline = :deadline, message = :message"
+                "SET self_destruct_status = :status, self_destruct_deadline = :deadline, "
+                "self_destruct_started_at = :started, countdown_rate = :rate, message = :message"
             ),
             ExpressionAttributeValues={
                 ":status": "countdown",
                 ":deadline": Decimal(deadline),
+                ":started": Decimal(now),
+                ":rate": Decimal(1),
                 ":message": COUNTDOWN_MESSAGE,
             },
         )
@@ -233,31 +330,33 @@ def move(direction):
         item["message"] = COUNTDOWN_MESSAGE
         event = "self_destruct_started"
 
+    if status == "countdown":
+        deadline, rate, rate_event = _retime_countdown(position, status, deadline, rate)
+        if rate_event:
+            event = rate_event
+
     if delta > 0 and position > RECOVERY_THRESHOLD and status == "countdown":
         table.update_item(
             Key={"state_id": STATE_ID},
             UpdateExpression=(
-                "SET self_destruct_status = :status, message = :message "
-                "REMOVE self_destruct_deadline"
+                "SET self_destruct_status = :status, countdown_rate = :rate, message = :message "
+                "REMOVE self_destruct_deadline, self_destruct_started_at"
             ),
             ExpressionAttributeValues={
                 ":status": "normal",
+                ":rate": Decimal(1),
                 ":message": ABORT_MESSAGE,
             },
         )
         status = "normal"
         deadline = None
+        rate = 1
         item["message"] = ABORT_MESSAGE
         event = "self_destruct_cancelled"
 
-    return {
-        "position": position,
-        "message": item.get("message", ""),
-        "self_destruct_status": status,
-        "self_destruct_deadline": int(deadline) if deadline is not None else None,
-        "server_time": int(time.time()),
-        "event": event,
-    }
+    state = get_state()
+    state["event"] = event
+    return state
 
 
 def save_message(message):
@@ -265,11 +364,9 @@ def save_message(message):
         raise ValueError("message must be a string")
     if len(message) > 10000:
         raise ValueError("message is too long")
-
     current = get_state()
     if current["self_destruct_status"] == "offline":
         raise ValueError("Our Lovely System is dead. The wall is no longer accepting messages.")
-
     result = table.update_item(
         Key={"state_id": STATE_ID},
         UpdateExpression="SET message = :message",
@@ -292,6 +389,8 @@ def resurrect(event, reason):
     current = get_state()
     if current["self_destruct_status"] != "offline":
         raise ValueError("Our Lovely System is not dead.")
+    if current.get("presentation_phase") != "tombstone":
+        raise ValueError("The tombstone has not appeared yet.")
 
     subject = claims["sub"]
     prior_count = resurrection_history(subject)
@@ -314,8 +413,8 @@ def resurrect(event, reason):
                         "TableName": TABLE_NAME,
                         "Key": {"state_id": {"S": STATE_ID}},
                         "UpdateExpression": (
-                            "SET self_destruct_status = :normal, #position = :position "
-                            "REMOVE self_destruct_deadline"
+                            "SET self_destruct_status = :normal, #position = :position, countdown_rate = :rate "
+                            "REMOVE self_destruct_deadline, self_destruct_started_at, self_destructed_at"
                         ),
                         "ConditionExpression": "self_destruct_status = :offline",
                         "ExpressionAttributeNames": {"#position": "position"},
@@ -323,6 +422,7 @@ def resurrect(event, reason):
                             ":normal": {"S": "normal"},
                             ":offline": {"S": "offline"},
                             ":position": {"N": str(RESURRECTION_POSITION)},
+                            ":rate": {"N": "1"},
                         },
                     }
                 },
@@ -345,8 +445,7 @@ def resurrect(event, reason):
             ]
         )
     except ClientError as error:
-        code = error.response.get("Error", {}).get("Code")
-        if code == "TransactionCanceledException":
+        if error.response.get("Error", {}).get("Code") == "TransactionCanceledException":
             raise ValueError(
                 "Resurrection failed. The system state changed or this identity "
                 "has already spent its resurrection virginity."
