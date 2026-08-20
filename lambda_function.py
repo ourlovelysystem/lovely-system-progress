@@ -1,5 +1,4 @@
 import json
-import math
 import os
 import time
 import uuid
@@ -20,7 +19,7 @@ SELF_DESTRUCT_SECONDS = 90 * 60
 SELF_DESTRUCT_THRESHOLD = 20
 RECOVERY_THRESHOLD = 50
 RESURRECTION_POSITION = 51
-ZERO_PROGRESS_ACCELERATION = 60
+ZERO_PROGRESS_ACCELERATION = 20
 DISAPPEARED_SECONDS = 90 * 60
 AUTO_RESURRECT_SECONDS = 72 * 60 * 60
 
@@ -112,12 +111,64 @@ def ensure_state():
         return table.get_item(Key={"state_id": STATE_ID}, ConsistentRead=True)["Item"]
 
 
+def countdown_snapshot(item, now):
+    """Return countdown seconds remaining at *now* and migrate the old deadline model."""
+    rate = max(1, int(item.get("countdown_rate", 1)))
+    remaining = item.get("countdown_remaining_seconds")
+    anchor = item.get("countdown_anchor_time")
+
+    if remaining is None or anchor is None:
+        old_deadline = item.get("self_destruct_deadline")
+        if old_deadline is None:
+            return 0, now, rate
+        # Old accelerated deployments compressed the wall-clock deadline. Convert
+        # that back into countdown-time units so the displayed MM:SS scale is retained.
+        remaining = max(0, int(old_deadline) - now) * rate
+        anchor = now
+        table.update_item(
+            Key={"state_id": STATE_ID},
+            UpdateExpression=(
+                "SET countdown_remaining_seconds = :remaining, countdown_anchor_time = :anchor "
+                "REMOVE self_destruct_deadline"
+            ),
+            ExpressionAttributeValues={
+                ":remaining": Decimal(remaining),
+                ":anchor": Decimal(anchor),
+            },
+        )
+        return remaining, anchor, rate
+
+    remaining = int(remaining)
+    anchor = int(anchor)
+    elapsed = max(0, now - anchor)
+    effective = max(0, remaining - elapsed * rate)
+    return effective, anchor, rate
+
+
+def settle_countdown(item, now, desired_rate=None):
+    remaining, _, old_rate = countdown_snapshot(item, now)
+    new_rate = old_rate if desired_rate is None else int(desired_rate)
+    table.update_item(
+        Key={"state_id": STATE_ID},
+        UpdateExpression=(
+            "SET countdown_remaining_seconds = :remaining, countdown_anchor_time = :anchor, "
+            "countdown_rate = :rate REMOVE self_destruct_deadline"
+        ),
+        ExpressionAttributeValues={
+            ":remaining": Decimal(remaining),
+            ":anchor": Decimal(now),
+            ":rate": Decimal(new_rate),
+        },
+    )
+    return remaining, new_rate
+
+
 def _set_destroyed(destroyed_at):
     table.update_item(
         Key={"state_id": STATE_ID},
         UpdateExpression=(
-            "SET self_destruct_status = :offline, self_destructed_at = :destroyed, "
-            "countdown_rate = :rate"
+            "SET self_destruct_status = :offline, self_destructed_at = :destroyed, countdown_rate = :rate "
+            "REMOVE countdown_remaining_seconds, countdown_anchor_time, self_destruct_deadline"
         ),
         ExpressionAttributeValues={
             ":offline": "offline",
@@ -132,9 +183,10 @@ def _auto_resurrect(now):
         table.update_item(
             Key={"state_id": STATE_ID},
             UpdateExpression=(
-                "SET self_destruct_status = :normal, #position = :position, "
-                "countdown_rate = :rate, last_auto_resurrected_at = :now "
-                "REMOVE self_destruct_deadline, self_destruct_started_at, self_destructed_at"
+                "SET self_destruct_status = :normal, #position = :position, countdown_rate = :rate, "
+                "last_auto_resurrected_at = :now "
+                "REMOVE self_destruct_deadline, self_destruct_started_at, self_destructed_at, "
+                "countdown_remaining_seconds, countdown_anchor_time"
             ),
             ConditionExpression="self_destruct_status = :offline",
             ExpressionAttributeNames={"#position": "position"},
@@ -155,19 +207,25 @@ def normalize(item):
     now = int(time.time())
     position = int(item.get("position", 50))
     status = item.get("self_destruct_status", "normal")
-    deadline = item.get("self_destruct_deadline")
-    deadline = int(deadline) if deadline is not None else None
     started_at = item.get("self_destruct_started_at")
     started_at = int(started_at) if started_at is not None else None
-    rate = int(item.get("countdown_rate", 1))
+    rate = max(1, int(item.get("countdown_rate", 1)))
     destroyed_at = item.get("self_destructed_at")
     destroyed_at = int(destroyed_at) if destroyed_at is not None else None
+    remaining = None
+    deadline = None
 
-    if status == "countdown" and deadline is not None and now >= deadline:
-        destroyed_at = deadline
-        _set_destroyed(destroyed_at)
-        status = "offline"
-        rate = 1
+    if status == "countdown":
+        remaining, _, rate = countdown_snapshot(item, now)
+        if remaining <= 0:
+            destroyed_at = now
+            _set_destroyed(destroyed_at)
+            status = "offline"
+            rate = 1
+            remaining = 0
+        else:
+            # Diagnostic/backward-compatible wall-clock ETA only. Not authoritative.
+            deadline = now + max(1, (remaining + rate - 1) // rate)
 
     phase = "nominal"
     if status == "offline":
@@ -183,10 +241,11 @@ def normalize(item):
             _auto_resurrect(now)
             status = "normal"
             position = RESURRECTION_POSITION
-            deadline = None
             started_at = None
             destroyed_at = None
             rate = 1
+            remaining = None
+            deadline = None
             phase = "nominal"
         elif age < DISAPPEARED_SECONDS:
             phase = "disappeared"
@@ -202,6 +261,7 @@ def normalize(item):
         "self_destruct_deadline": deadline,
         "self_destruct_started_at": started_at,
         "self_destructed_at": destroyed_at,
+        "countdown_remaining_seconds": remaining,
         "countdown_rate": rate,
         "presentation_phase": phase,
         "disappeared_until": destroyed_at + DISAPPEARED_SECONDS if destroyed_at is not None else None,
@@ -249,28 +309,6 @@ def resurrection_status(event):
     }
 
 
-def _retime_countdown(position, status, deadline, rate):
-    if status != "countdown" or deadline is None:
-        return deadline, rate, None
-    now = int(time.time())
-    remaining_real = max(0, int(deadline) - now)
-    remaining_countdown = remaining_real * max(1, int(rate))
-    desired_rate = ZERO_PROGRESS_ACCELERATION if position == 0 else 1
-    if desired_rate == int(rate):
-        return int(deadline), int(rate), None
-    new_deadline = now + int(math.ceil(remaining_countdown / desired_rate))
-    event = "countdown_accelerated" if desired_rate > 1 else "countdown_normalized"
-    table.update_item(
-        Key={"state_id": STATE_ID},
-        UpdateExpression="SET self_destruct_deadline = :deadline, countdown_rate = :rate",
-        ExpressionAttributeValues={
-            ":deadline": Decimal(new_deadline),
-            ":rate": Decimal(desired_rate),
-        },
-    )
-    return new_deadline, desired_rate, event
-
-
 def move(direction):
     if direction not in {"left", "right"}:
         raise ValueError("direction must be left or right")
@@ -300,9 +338,6 @@ def move(direction):
     item = result.get("Attributes") or {}
     position = int(item.get("position", 50))
     status = item.get("self_destruct_status", "normal")
-    deadline = item.get("self_destruct_deadline")
-    deadline = int(deadline) if deadline is not None else None
-    rate = int(item.get("countdown_rate", 1))
     event = None
 
     if delta < 0 and 20 < position < 25:
@@ -310,37 +345,40 @@ def move(direction):
 
     if delta < 0 and position == SELF_DESTRUCT_THRESHOLD and status != "countdown":
         now = int(time.time())
-        deadline = now + SELF_DESTRUCT_SECONDS
-        rate = 1
         table.update_item(
             Key={"state_id": STATE_ID},
             UpdateExpression=(
-                "SET self_destruct_status = :status, self_destruct_deadline = :deadline, "
-                "self_destruct_started_at = :started, countdown_rate = :rate, message = :message"
+                "SET self_destruct_status = :status, self_destruct_started_at = :started, "
+                "countdown_remaining_seconds = :remaining, countdown_anchor_time = :anchor, "
+                "countdown_rate = :rate, message = :message REMOVE self_destruct_deadline"
             ),
             ExpressionAttributeValues={
                 ":status": "countdown",
-                ":deadline": Decimal(deadline),
                 ":started": Decimal(now),
+                ":remaining": Decimal(SELF_DESTRUCT_SECONDS),
+                ":anchor": Decimal(now),
                 ":rate": Decimal(1),
                 ":message": COUNTDOWN_MESSAGE,
             },
         )
         status = "countdown"
-        item["message"] = COUNTDOWN_MESSAGE
         event = "self_destruct_started"
 
     if status == "countdown":
-        deadline, rate, rate_event = _retime_countdown(position, status, deadline, rate)
-        if rate_event:
-            event = rate_event
+        current_item = table.get_item(Key={"state_id": STATE_ID}, ConsistentRead=True)["Item"]
+        old_rate = max(1, int(current_item.get("countdown_rate", 1)))
+        desired_rate = ZERO_PROGRESS_ACCELERATION if position == 0 else 1
+        if desired_rate != old_rate:
+            now = int(time.time())
+            settle_countdown(current_item, now, desired_rate)
+            event = "countdown_accelerated" if desired_rate > 1 else "countdown_normalized"
 
     if delta > 0 and position > RECOVERY_THRESHOLD and status == "countdown":
         table.update_item(
             Key={"state_id": STATE_ID},
             UpdateExpression=(
                 "SET self_destruct_status = :status, countdown_rate = :rate, message = :message "
-                "REMOVE self_destruct_deadline, self_destruct_started_at"
+                "REMOVE self_destruct_deadline, self_destruct_started_at, countdown_remaining_seconds, countdown_anchor_time"
             ),
             ExpressionAttributeValues={
                 ":status": "normal",
@@ -348,10 +386,6 @@ def move(direction):
                 ":message": ABORT_MESSAGE,
             },
         )
-        status = "normal"
-        deadline = None
-        rate = 1
-        item["message"] = ABORT_MESSAGE
         event = "self_destruct_cancelled"
 
     state = get_state()
@@ -414,7 +448,8 @@ def resurrect(event, reason):
                         "Key": {"state_id": {"S": STATE_ID}},
                         "UpdateExpression": (
                             "SET self_destruct_status = :normal, #position = :position, countdown_rate = :rate "
-                            "REMOVE self_destruct_deadline, self_destruct_started_at, self_destructed_at"
+                            "REMOVE self_destruct_deadline, self_destruct_started_at, self_destructed_at, "
+                            "countdown_remaining_seconds, countdown_anchor_time"
                         ),
                         "ConditionExpression": "self_destruct_status = :offline",
                         "ExpressionAttributeNames": {"#position": "position"},
@@ -447,21 +482,18 @@ def resurrect(event, reason):
     except ClientError as error:
         if error.response.get("Error", {}).get("Code") == "TransactionCanceledException":
             raise ValueError(
-                "Resurrection failed. The system state changed or this identity "
-                "has already spent its resurrection virginity."
+                "Resurrection failed. The system state changed or this identity has already spent its resurrection virginity."
             )
         raise
 
     result = get_state()
-    result.update(
-        {
-            "event": "resurrected",
-            "resurrection_event_id": event_id,
-            "resurrected_by": subject,
-            "was_virgin": True,
-            "prior_resurrections": 0,
-        }
-    )
+    result.update({
+        "event": "resurrected",
+        "resurrection_event_id": event_id,
+        "resurrected_by": subject,
+        "was_virgin": True,
+        "prior_resurrections": 0,
+    })
     return result
 
 
